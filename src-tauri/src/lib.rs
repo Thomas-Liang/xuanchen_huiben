@@ -15,28 +15,38 @@ fn parse_prompt(prompt: &str) -> Result<serde_json::Value, String> {
 
     while let Some(at_pos) = search_prompt.find('@') {
         let remaining = &search_prompt[at_pos + 1..];
-        let mut end_pos = 0;
-        for (i, c) in remaining.chars().enumerate() {
+        let mut end_char_index = 0;
+
+        for (i, c) in remaining.char_indices() {
             if !c.is_alphanumeric() && c != '_' {
-                end_pos = i;
                 break;
             }
-            end_pos = i + 1;
+            end_char_index = i + c.len_utf8();
         }
 
-        if end_pos > 0 {
-            let name = &remaining[..end_pos];
-            if !characters.iter().any(|c| c["name"].as_str() == Some(name)) {
+        if end_char_index > 0 {
+            let name_chars: String = remaining
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            if !name_chars.is_empty()
+                && !characters
+                    .iter()
+                    .any(|c| c["name"].as_str() == Some(&name_chars))
+            {
                 characters.push(serde_json::json!({
-                    "name": name,
+                    "name": name_chars,
                     "reference_image": serde_json::Value::Null,
                     "bound": false
                 }));
             }
-        }
 
-        if end_pos < remaining.len() {
-            search_prompt = remaining[end_pos..].to_string();
+            let next_start = at_pos + 1 + end_char_index;
+            if next_start < search_prompt.len() {
+                search_prompt = search_prompt[next_start..].to_string();
+            } else {
+                break;
+            }
         } else {
             break;
         }
