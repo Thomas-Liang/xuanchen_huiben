@@ -1,5 +1,5 @@
 export interface PromptSegment {
-  type: 'scene' | 'character' | 'action' | 'background' | 'other';
+  type: 'scene' | 'character' | 'action' | 'background' | 'time' | 'weather' | 'style' | 'other';
   content: string;
   start_index: number;
   end_index: number;
@@ -19,20 +19,37 @@ export interface CharacterRef {
 
 export interface CharacterBinding {
   characterName: string;
-  referenceImagePath: string;
+  referenceImagePath?: string;
   imageType: '人物' | '场景';
   createdAt: string;
+  bound: boolean;
+}
+
+export interface CharacterBindingInfo {
+  character_name: string;
+  reference_image_path?: string;
+  image_type: string;
+}
+
+export interface CharacterBindingResult {
+  success: boolean;
+  binding?: CharacterBinding;
+  error?: string;
 }
 
 export interface ImageGenerationParams {
-  model: 'jimeng' | 'banana_pro';
+  model: 'seedream' | 'banana_pro';
   prompt: string;
-  segments: PromptSegment[];
-  characterBindings: CharacterBinding[];
+  characterBindings: CharacterBindingInfo[];
   width: number;
   height: number;
   count: number;
   quality: 'standard' | 'high' | 'ultra';
+  size?: string;
+  sequential_image_generation?: 'auto' | 'disabled';
+  response_format?: 'url' | 'b64_json';
+  watermark?: boolean;
+  images?: string[];
 }
 
 export interface ImageGenerationResult {
@@ -43,7 +60,7 @@ export interface ImageGenerationResult {
 }
 
 export interface APIConfig {
-  jimeng: {
+  seedream: {
     baseUrl: string;
     apiKey: string;
   };
@@ -58,4 +75,16 @@ export interface GenerationProgress {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   progress: number;
   message?: string;
+}
+
+export interface GenerationConfig {
+  model: 'seedream' | 'banana_pro';
+  width: number;
+  height: number;
+  count: number;
+  quality: 'standard' | 'high' | 'ultra';
+  size?: string;
+  sequential_image_generation?: 'auto' | 'disabled';
+  response_format?: 'url' | 'b64_json';
+  watermark?: boolean;
 }

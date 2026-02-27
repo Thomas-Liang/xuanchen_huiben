@@ -1,96 +1,63 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
+mod api;
+mod commands;
+
+use api::create_api_router;
+use commands::character_binding::{
+    bind_character_reference, delete_reference_image, get_all_bindings, get_bindings_for_prompt,
+    get_character_binding, load_bindings_from_file, save_reference_image, unbind_character,
+};
+use commands::image_generator::{
+    generate_image, get_default_api_config, get_default_generation_config,
+    get_generation_progress, load_api_config, load_generation_config,
+    save_api_config, save_generation_config, test_api_connection,
+};
+use commands::prompt_parser::{parse_prompt, test_parse};
+use std::net::SocketAddr;
+
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-#[tauri::command]
-fn parse_prompt(prompt: &str) -> Result<serde_json::Value, String> {
-    if prompt.is_empty() {
-        return Err("Prompt cannot be empty".to_string());
-    }
+#[tokio::main]
+pub async fn main() {
+    let _ = load_bindings_from_file();
+    commands::image_generator::load_config_from_file();
 
-    let mut characters: Vec<serde_json::Value> = vec![];
-    let mut search_prompt = prompt.to_string();
+    let api_router = create_api_router();
+    let addr = SocketAddr::from(([127, 0, 0, 1], 8888));
+    
+    let api_handle = tokio::spawn(async move {
+        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+        println!("HTTP API running at http://{}", listener.local_addr().unwrap());
+        axum::serve(listener, api_router).await.unwrap();
+    });
 
-    while let Some(at_pos) = search_prompt.find('@') {
-        let remaining = &search_prompt[at_pos + 1..];
-        let mut end_char_index = 0;
-
-        for (i, c) in remaining.char_indices() {
-            if !c.is_alphanumeric() && c != '_' {
-                break;
-            }
-            end_char_index = i + c.len_utf8();
-        }
-
-        if end_char_index > 0 {
-            let name_chars: String = remaining
-                .chars()
-                .take_while(|c| c.is_alphanumeric() || *c == '_')
-                .collect();
-            if !name_chars.is_empty()
-                && !characters
-                    .iter()
-                    .any(|c| c["name"].as_str() == Some(&name_chars))
-            {
-                characters.push(serde_json::json!({
-                    "name": name_chars,
-                    "reference_image": serde_json::Value::Null,
-                    "bound": false
-                }));
-            }
-
-            let next_start = at_pos + 1 + end_char_index;
-            if next_start < search_prompt.len() {
-                search_prompt = search_prompt[next_start..].to_string();
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-
-    let clean_prompt = prompt.replace('@', "").trim().to_string();
-    let segment_type = if clean_prompt.contains("在")
-        || clean_prompt.contains("场景")
-        || clean_prompt.contains("背景")
-    {
-        "scene"
-    } else if clean_prompt.contains("做")
-        || clean_prompt.contains("正在")
-        || clean_prompt.contains("走")
-        || clean_prompt.contains("跑")
-    {
-        "action"
-    } else {
-        "other"
-    };
-
-    let segments = if !clean_prompt.is_empty() {
-        vec![serde_json::json!({
-            "type": segment_type,
-            "content": clean_prompt,
-            "start_index": 0,
-            "end_index": clean_prompt.len()
-        })]
-    } else {
-        vec![]
-    };
-
-    Ok(serde_json::json!({
-        "original": prompt,
-        "segments": segments,
-        "characters": characters
-    }))
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet, parse_prompt])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            parse_prompt,
+            test_parse,
+            save_reference_image,
+            bind_character_reference,
+            unbind_character,
+            get_character_binding,
+            get_all_bindings,
+            get_bindings_for_prompt,
+            delete_reference_image,
+            generate_image,
+            get_generation_progress,
+            save_api_config,
+            load_api_config,
+            get_default_api_config,
+            test_api_connection,
+            save_generation_config,
+            load_generation_config,
+            get_default_generation_config,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    let _ = api_handle.await;
 }
