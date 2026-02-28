@@ -4,6 +4,11 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use rand::Rng;
 
 static API_CONFIG: Mutex<Option<ApiConfig>> = Mutex::new(None);
 static GENERATION_CONFIG: Mutex<Option<GenerationConfig>> = Mutex::new(None);
@@ -103,11 +108,70 @@ fn get_generation_config_path() -> PathBuf {
     get_app_data_dir().join("generation_config.json")
 }
 
+fn get_key_path() -> PathBuf {
+    get_app_data_dir().join("key.bin")
+}
+
+fn get_or_create_key() -> Result<[u8; 32], String> {
+    let key_path = get_key_path();
+    
+    if key_path.exists() {
+        let key_data = fs::read(&key_path).map_err(|e| e.to_string())?;
+        if key_data.len() == 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&key_data);
+            return Ok(key);
+        }
+    }
+    
+    let mut key = [0u8; 32];
+    rand::thread_rng().fill(&mut key);
+    
+    fs::write(&key_path, &key).map_err(|e| e.to_string())?;
+    
+    Ok(key)
+}
+
+fn encrypt_data(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
+    
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    let ciphertext = cipher.encrypt(nonce, data).map_err(|e| e.to_string())?;
+    
+    let mut result = Vec::new();
+    result.extend_from_slice(&nonce_bytes);
+    result.extend_from_slice(&ciphertext);
+    
+    Ok(result)
+}
+
+fn decrypt_data(encrypted: &[u8], key: &[u8; 32]) -> Result<Vec<u8>, String> {
+    if encrypted.len() < 12 {
+        return Err("加密数据格式错误".to_string());
+    }
+    
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
+    
+    let nonce = Nonce::from_slice(&encrypted[..12]);
+    let ciphertext = &encrypted[12..];
+    
+    let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|e| e.to_string())?;
+    
+    Ok(plaintext)
+}
+
 #[tauri::command]
 pub fn save_api_config(config: ApiConfig) -> Result<bool, String> {
     let config_path = get_config_path();
     let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
-    fs::write(&config_path, json).map_err(|e| e.to_string())?;
+    
+    let key = get_or_create_key()?;
+    let encrypted = encrypt_data(json.as_bytes(), &key)?;
+    
+    fs::write(&config_path, encrypted).map_err(|e| e.to_string())?;
     
     let mut api_config = API_CONFIG.lock().map_err(|e| e.to_string())?;
     *api_config = Some(config);
@@ -120,7 +184,12 @@ pub fn load_api_config() -> Result<ApiConfig, String> {
     let config_path = get_config_path();
     
     if config_path.exists() {
-        let json = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+        let encrypted = fs::read(&config_path).map_err(|e| e.to_string())?;
+        
+        let key = get_or_create_key()?;
+        let decrypted = decrypt_data(&encrypted, &key)?;
+        let json = String::from_utf8(decrypted).map_err(|e| e.to_string())?;
+        
         let config: ApiConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
         
         let mut api_config = API_CONFIG.lock().map_err(|e| e.to_string())?;
@@ -179,8 +248,8 @@ pub fn load_generation_config() -> Result<GenerationConfig, String> {
 pub fn get_default_generation_config() -> GenerationConfig {
     GenerationConfig {
         model: "seedream".to_string(),
-        width: 1024,
-        height: 1024,
+        width: 1,
+        height: 1,
         count: 1,
         quality: "standard".to_string(),
         size: Some("1024x1024".to_string()),
@@ -216,9 +285,15 @@ pub async fn generate_image(
         Some(c) => c,
         None => {
             let config_path = get_config_path();
+            eprintln!("Config path: {:?}", config_path);
             if config_path.exists() {
-                let json = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
-                let loaded: ApiConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+                eprintln!("Config file exists, attempting to decrypt...");
+                let encrypted = fs::read(&config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
+                let key = get_or_create_key().map_err(|e| format!("获取密钥失败: {}", e))?;
+                let decrypted = decrypt_data(&encrypted, &key).map_err(|e| format!("解密失败: {}", e))?;
+                let json = String::from_utf8(decrypted).map_err(|e| format!("UTF8转换失败: {}", e))?;
+                eprintln!("Config JSON: {}", json);
+                let loaded: ApiConfig = serde_json::from_str(&json).map_err(|e| format!("JSON解析失败: {}", e))?;
                 let mut api_config = API_CONFIG.lock().map_err(|e| e.to_string())?;
                 *api_config = Some(loaded.clone());
                 loaded
@@ -235,6 +310,8 @@ pub async fn generate_image(
         "banana_pro" => config.banana_pro,
         _ => return Err("不支持的模型".to_string()),
     };
+    
+    eprintln!("Using model: {}, base_url: {}", params.model, model_config.base_url);
     
     if model_config.api_key.is_empty() {
         return Err("请先配置API Key".to_string());
@@ -288,7 +365,7 @@ pub async fn generate_image(
     
     let result = match params.model.as_str() {
         "seedream" => call_seedream_api(&model_config, &prompt, params.size, params.sequential_image_generation, params.response_format, params.watermark, final_images).await,
-        "banana_pro" => call_banana_pro_api(&model_config, &prompt, params.width, params.height, params.count).await,
+        "banana_pro" => call_banana_pro_api(&model_config, &prompt, params.width, params.height, params.count, final_images).await,
         _ => Err("不支持的模型".to_string()),
     };
     
@@ -351,21 +428,68 @@ async fn call_banana_pro_api(
     width: u32,
     height: u32,
     count: u32,
+    images: Option<Vec<String>>,
 ) -> Result<Vec<String>, String> {
     let client = reqwest::Client::new();
     
+    let aspect_ratio = calculate_aspect_ratio(width, height);
+    
+    let image_size = match width {
+        0..=576 => "256k",
+        577..=1024 => "1K",
+        1025..=2048 => "2K",
+        _ => "4K",
+    };
+    
+    // Build parts with optional reference images
+    let mut parts: Vec<serde_json::Value> = Vec::new();
+    
+    // Add reference images if any
+    if let Some(ref imgs) = images {
+        for img in imgs {
+            let img_data = if img.starts_with("data:") {
+                img.split(',').nth(1).unwrap_or(img.as_str()).to_string()
+            } else {
+                img.clone()
+            };
+            parts.push(serde_json::json!({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": img_data
+                }
+            }));
+        }
+    }
+    
+    // Add text prompt
+    parts.push(serde_json::json!({ "text": prompt }));
+    
+    let contents = vec![serde_json::json!({
+        "role": "user",
+        "parts": parts
+    })];
+    
     let request_body = serde_json::json!({
-        "prompt": prompt,
-        "num_images": count,
-        "width": width,
-        "height": height,
-        "guidance_scale": 7.5,
-        "num_inference_steps": 30
+        "contents": contents,
+        "generationConfig": {
+            "responseModalities": ["TEXT", "IMAGE"],
+            "imageConfig": {
+                "aspectRatio": aspect_ratio,
+                "imageSize": image_size
+            }
+        }
     });
+
+    eprintln!("Banana Pro API request body: {:?}", request_body);
+    
+    let url = format!(
+        "{}/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        config.base_url, config.api_key
+    );
+    eprintln!("Banana Pro API URL: {}", url);
     
     let response = client
-        .post(&format!("{}/v1/generate", config.base_url))
-        .header("Authorization", format!("Bearer {}", config.api_key))
+        .post(&url)
         .header("Content-Type", "application/json")
         .json(&request_body)
         .send()
@@ -375,21 +499,59 @@ async fn call_banana_pro_api(
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+        eprintln!("Banana Pro API error response: {}", text);
         return Err(format!("API错误 {}: {}", status, text));
     }
     
     let data: serde_json::Value = response.json().await.map_err(|e| e.to_string())?;
     
-    let images: Vec<String> = data["images"]
+    eprintln!("Banana Pro API response: {:?}", data);
+    
+    // Check for error in response
+    if let Some(error) = data.get("error") {
+        return Err(format!("API返回错误: {:?}", error));
+    }
+    
+    let images: Vec<String> = data["candidates"]
         .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|item| item.as_str().map(|s| s.to_string()))
-                .collect()
+        .and_then(|arr| {
+            Some(arr.iter()
+                .filter_map(|candidate| {
+                    candidate["content"]["parts"]
+                        .as_array()
+                        .and_then(|parts| {
+                            parts.iter().find_map(|part| {
+                                part["inlineData"]["data"].as_str().map(|s| {
+                                    let mime = part["inlineData"]["mimeType"].as_str().unwrap_or("image/png");
+                                    format!("data:{};base64,{}", mime, s)
+                                })
+                            })
+                        })
+                })
+                .collect::<Vec<_>>())
         })
         .unwrap_or_default();
     
+    if images.is_empty() {
+        return Err("未生成图片".to_string());
+    }
+    
     Ok(images)
+}
+
+fn calculate_aspect_ratio(width: u32, height: u32) -> String {
+    let gcd = gcd_u32(width, height);
+    let w = width / gcd;
+    let h = height / gcd;
+    format!("{}:{}", w, h)
+}
+
+fn gcd_u32(a: u32, b: u32) -> u32 {
+    if b == 0 {
+        a
+    } else {
+        gcd_u32(b, a % b)
+    }
 }
 
 async fn call_seedream_api(
@@ -534,7 +696,10 @@ pub async fn test_api_connection(model: String, base_url: Option<String>, api_ke
             None => {
                 let config_path = get_config_path();
                 if config_path.exists() {
-                    let json = fs::read_to_string(&config_path).map_err(|e| e.to_string())?;
+                    let encrypted = fs::read(&config_path).map_err(|e| e.to_string())?;
+                    let key = get_or_create_key()?;
+                    let decrypted = decrypt_data(&encrypted, &key)?;
+                    let json = String::from_utf8(decrypted).map_err(|e| e.to_string())?;
                     let loaded: ApiConfig = serde_json::from_str(&json).map_err(|e| e.to_string())?;
                     let mut api_config = API_CONFIG.lock().map_err(|e| e.to_string())?;
                     *api_config = Some(loaded.clone());
@@ -586,10 +751,16 @@ pub async fn test_api_connection(model: String, base_url: Option<String>, api_ke
 pub fn load_config_from_file() {
     let config_path = get_config_path();
     if config_path.exists() {
-        if let Ok(json) = fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str::<ApiConfig>(&json) {
-                let mut api_config = API_CONFIG.lock().unwrap();
-                *api_config = Some(config);
+        if let Ok(encrypted) = fs::read(&config_path) {
+            if let Ok(key) = get_or_create_key() {
+                if let Ok(decrypted) = decrypt_data(&encrypted, &key) {
+                    if let Ok(json) = String::from_utf8(decrypted) {
+                        if let Ok(config) = serde_json::from_str::<ApiConfig>(&json) {
+                            let mut api_config = API_CONFIG.lock().unwrap();
+                            *api_config = Some(config);
+                        }
+                    }
+                }
             }
         }
     }

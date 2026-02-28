@@ -23,6 +23,7 @@ export interface CharacterBinding {
   imageType: '人物' | '场景';
   createdAt: string;
   bound: boolean;
+  tags?: string[];
 }
 
 export interface CharacterBindingInfo {

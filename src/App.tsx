@@ -22,6 +22,8 @@ import {
   Col,
   Divider,
   Alert,
+  Steps,
+  Popconfirm,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -33,6 +35,10 @@ import {
   CheckCircleFilled,
   SettingOutlined,
   DownloadOutlined,
+  QuestionCircleOutlined,
+  PictureOutlined,
+  SearchOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import type {
   ParsedPrompt,
@@ -43,6 +49,7 @@ import type {
   GenerationConfig,
 } from './types';
 import * as api from './api';
+import type { ReferenceImageQuery } from './api';
 import './App.css';
 
 const { Header, Content } = Layout;
@@ -85,9 +92,10 @@ function MainApp() {
 
   const [selectedModel, setSelectedModel] = useState<'seedream' | 'banana_pro'>('seedream');
   const [imageSize, setImageSize] = useState<{ width: number; height: number }>({
-    width: 512,
-    height: 512,
+    width: 1,
+    height: 1,
   });
+  const [bananaResolution, setBananaResolution] = useState<string>('1K');
   const [imageCount, setImageCount] = useState(1);
   const [imageQuality, setImageQuality] = useState<'standard' | 'high' | 'ultra'>('standard');
   const [seedreamSize, setSeedreamSize] = useState<string>('1024x1024');
@@ -100,6 +108,16 @@ function MainApp() {
   const [generationProgress, setGenerationProgress] = useState(0);
   const [generationResult, setGenerationResult] = useState<ImageGenerationResult | null>(null);
   const [configModalVisible, setConfigModalVisible] = useState(false);
+  const [helpModalVisible, setHelpModalVisible] = useState(false);
+  const [referenceModalVisible, setReferenceModalVisible] = useState(false);
+  const [referenceImages, setReferenceImages] = useState<CharacterBinding[]>([]);
+  const [referenceLoading, setReferenceLoading] = useState(false);
+  const [referenceFilterType, setReferenceFilterType] = useState<string>('');
+  const [referenceSearch, setReferenceSearch] = useState('');
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [editingTag, setEditingTag] = useState<string | null>(null);
+  const [newTag, setNewTag] = useState('');
   const [characterBindings, setCharacterBindings] = useState<Record<string, CharacterBinding>>({});
   const [apiConfig, setApiConfig] = useState<APIConfig>({
     seedream: { baseUrl: '', apiKey: '' },
@@ -115,7 +133,7 @@ function MainApp() {
 
   const loadApiConfig = async () => {
     try {
-      const config = await api.getDefaultApiConfig();
+      const config = await api.loadApiConfig();
       setApiConfig(config);
     } catch (error) {
       console.error('加载API配置失败:', error);
@@ -128,10 +146,46 @@ function MainApp() {
       if (config.model === 'seedream' || config.model === 'banana_pro') {
         setSelectedModel(config.model);
       }
-      setImageSize({ width: config.width, height: config.height });
+
+      const normalizeRatio = (w: number | undefined, h: number | undefined) => {
+        if (!w || !h || w <= 0 || h <= 0) return { width: 1, height: 1 };
+
+        // Simple 1:1 check
+        if (w === h) return { width: 1, height: 1 };
+
+        // Iterative GCD (Safe from recursion limits)
+        let a = w,
+          b = h;
+        while (b) {
+          a %= b;
+          [a, b] = [b, a];
+        }
+        const common = a;
+
+        const nw = w / common;
+        const nh = h / common;
+
+        // Only return normalized if it matches our standard UI options
+        const standardRatios = ['1:1', '16:9', '9:16', '4:3', '3:4'];
+        if (standardRatios.includes(`${nw}:${nh}`)) {
+          return { width: nw, height: nh };
+        }
+
+        // Fallback to default 1:1 if it's some weird non-standard large number
+        // or just keep it as is if it's small enough (though unlikely with current UI)
+        return nw > 20 || nh > 20 ? { width: 1, height: 1 } : { width: nw, height: nh };
+      };
+
+      if (config.model === 'banana_pro') {
+        setImageSize(normalizeRatio(config.width, config.height));
+        if (config.size) setBananaResolution(config.size);
+      } else {
+        setImageSize(normalizeRatio(config.width, config.height));
+        if (config.size) setSeedreamSize(config.size);
+      }
+
       setImageCount(config.count);
       setImageQuality(config.quality as 'standard' | 'high' | 'ultra');
-      if (config.size) setSeedreamSize(config.size);
       if (config.sequential_image_generation)
         setSequentialImageGeneration(config.sequential_image_generation as 'auto' | 'disabled');
       if (config.response_format) setResponseFormat(config.response_format as 'url' | 'b64_json');
@@ -156,7 +210,9 @@ function MainApp() {
 
       const bindingMap: Record<string, CharacterBinding> = {};
       bindings.forEach(b => {
-        bindingMap[b.characterName] = b;
+        if (b.referenceImagePath && b.referenceImagePath.trim() !== '') {
+          bindingMap[b.characterName] = b;
+        }
       });
       setCharacterBindings(bindingMap);
 
@@ -325,6 +381,26 @@ function MainApp() {
     setGenerationResult(null);
 
     try {
+      let width: number, height: number;
+
+      if (selectedModel === 'seedream') {
+        const [w, h] = seedreamSize.split('x').map(Number);
+        width = w;
+        height = h;
+      } else {
+        // banana_pro uses aspect ratio and resolution
+        const baseResolution =
+          bananaResolution === '4K' ? 4096 : bananaResolution === '2K' ? 2048 : 1024;
+        const ratio = imageSize.width / imageSize.height;
+        if (ratio >= 1) {
+          width = baseResolution;
+          height = Math.round(baseResolution / ratio);
+        } else {
+          height = baseResolution;
+          width = Math.round(baseResolution * ratio);
+        }
+      }
+
       const params: ImageGenerationParams = {
         model: selectedModel,
         prompt: parsedResult.original,
@@ -333,8 +409,8 @@ function MainApp() {
           reference_image_path: b.referenceImagePath,
           image_type: b.imageType,
         })),
-        width: imageSize.width,
-        height: imageSize.height,
+        width,
+        height,
         count: imageCount,
         quality: imageQuality,
         watermark: selectedModel === 'seedream' ? watermark === 'true' : undefined,
@@ -391,15 +467,111 @@ function MainApp() {
     }
   };
 
+  const loadReferenceImages = async () => {
+    setReferenceLoading(true);
+    try {
+      const query: ReferenceImageQuery = {};
+      if (referenceFilterType) {
+        query.image_type = referenceFilterType;
+      }
+      if (referenceSearch) {
+        query.search = referenceSearch;
+      }
+      if (selectedTags.length > 0) {
+        query.tags = selectedTags;
+      }
+      const images = await api.getReferenceImages(query);
+      setReferenceImages(images);
+    } catch (error) {
+      message.error(`加载参考图失败: ${error}`);
+    } finally {
+      setReferenceLoading(false);
+    }
+  };
+
+  const loadAllTags = async () => {
+    try {
+      const tags = await api.getAllTags();
+      setAllTags(tags);
+    } catch (error) {
+      console.error('加载标签失败:', error);
+    }
+  };
+
+  const openReferenceModal = async () => {
+    setReferenceModalVisible(true);
+    await loadAllTags();
+    await loadReferenceImages();
+  };
+
+  const handleDeleteReference = async (characterName: string) => {
+    try {
+      await api.deleteReferenceImage(characterName);
+      message.success('参考图已删除');
+      await loadReferenceImages();
+      await loadAllTags();
+    } catch (error) {
+      message.error(`删除失败: ${error}`);
+    }
+  };
+
+  const handleAddTag = async (characterName: string) => {
+    if (!newTag.trim()) {
+      message.warning('请输入标签');
+      return;
+    }
+    try {
+      await api.addTagToReference(characterName, newTag.trim());
+      message.success('标签添加成功');
+      setNewTag('');
+      setEditingTag(null);
+      await loadReferenceImages();
+      await loadAllTags();
+    } catch (error) {
+      message.error(`添加标签失败: ${error}`);
+    }
+  };
+
+  const handleRemoveTag = async (characterName: string, tag: string) => {
+    try {
+      await api.removeTagFromReference(characterName, tag);
+      message.success('标签已移除');
+      await loadReferenceImages();
+      await loadAllTags();
+    } catch (error) {
+      message.error(`移除标签失败: ${error}`);
+    }
+  };
+
+  const handleSearchReference = () => {
+    loadReferenceImages();
+  };
+
+  const handleFilterTypeChange = (type: string) => {
+    setReferenceFilterType(type);
+    loadReferenceImages();
+  };
+
   const handleSaveGenerationConfig = async () => {
     try {
+      let width: number, height: number;
+
+      if (selectedModel === 'seedream') {
+        const [w, h] = seedreamSize.split('x').map(Number);
+        width = w;
+        height = h;
+      } else {
+        width = imageSize.width;
+        height = imageSize.height;
+      }
+
       const config: GenerationConfig = {
         model: selectedModel,
-        width: imageSize.width,
-        height: imageSize.height,
+        width,
+        height,
         count: imageCount,
         quality: imageQuality,
-        size: selectedModel === 'seedream' ? seedreamSize : undefined,
+        size: selectedModel === 'seedream' ? seedreamSize : bananaResolution,
         sequential_image_generation:
           selectedModel === 'seedream' ? sequentialImageGeneration : undefined,
         response_format: selectedModel === 'seedream' ? responseFormat : undefined,
@@ -409,6 +581,17 @@ function MainApp() {
       message.success('生成参数配置已保存为默认');
     } catch (error) {
       message.error(`保存失败: ${error}`);
+    }
+  };
+
+  const handleSaveImage = async (imageUrl: string) => {
+    try {
+      const saved = await api.saveImageDialog(imageUrl);
+      if (saved) {
+        message.success('图片已保存到: ' + saved);
+      }
+    } catch (error) {
+      message.error('保存失败: ' + error);
     }
   };
 
@@ -426,9 +609,27 @@ function MainApp() {
           <div className="header-content">
             <RobotOutlined className="header-icon" />
             <Title level={4} className="header-title">
-              AI绘画助手
+              泫晨懿然·灵犀绘梦助手
             </Title>
           </div>
+          <Space>
+            <Button
+              type="text"
+              icon={<PictureOutlined />}
+              onClick={openReferenceModal}
+              style={{ color: '#fff' }}
+            >
+              参考图管理
+            </Button>
+            <Button
+              type="text"
+              icon={<QuestionCircleOutlined />}
+              onClick={() => setHelpModalVisible(true)}
+              style={{ color: '#fff' }}
+            >
+              使用说明
+            </Button>
+          </Space>
         </Header>
         <Content className="app-content">
           <div className="main-container">
@@ -504,9 +705,10 @@ function MainApp() {
                             return (
                               <div key={idx} className="character-item">
                                 <div className="character-avatar">
-                                  {binding?.referenceImagePath ? (
+                                  {binding?.referenceImagePath &&
+                                  binding.referenceImagePath.trim() !== '' ? (
                                     <img
-                                      src={api.getImageUrl(binding.referenceImagePath)}
+                                      src={api.getImageUrl(binding.referenceImagePath || '')}
                                       alt={char.name}
                                       style={{
                                         width: '100%',
@@ -680,23 +882,38 @@ function MainApp() {
                           </>
                         ) : (
                           <>
-                            <Col span={8}>
-                              <Text strong>图片尺寸：</Text>
+                            <Col span={12}>
+                              <Text strong>图片比例：</Text>
                               <Select
-                                value={`${imageSize.width}x${imageSize.height}`}
+                                value={`${imageSize.width}:${imageSize.height}`}
                                 onChange={value => {
-                                  const [w, h] = value.split('x').map(Number);
+                                  const [w, h] = value.split(':').map(Number);
                                   setImageSize({ width: w, height: h });
                                 }}
                                 style={{ width: '100%', marginTop: 4 }}
                                 options={[
-                                  { value: '1024x1024', label: '1K (1024x1024)' },
-                                  { value: '2048x2048', label: '2K (2048x2048)' },
-                                  { value: '4096x4096', label: '4K (4096x4096)' },
+                                  { value: '1:1', label: '1:1 (方形)' },
+                                  { value: '16:9', label: '16:9 (横版)' },
+                                  { value: '9:16', label: '9:16 (竖版)' },
+                                  { value: '4:3', label: '4:3' },
+                                  { value: '3:4', label: '3:4' },
                                 ]}
                               />
                             </Col>
-                            <Col span={8}>
+                            <Col span={12}>
+                              <Text strong>分辨率：</Text>
+                              <Select
+                                value={bananaResolution}
+                                onChange={setBananaResolution}
+                                style={{ width: '100%', marginTop: 4 }}
+                                options={[
+                                  { value: '1K', label: '1K (1024)' },
+                                  { value: '2K', label: '2K (2048)' },
+                                  { value: '4K', label: '4K (4096)' },
+                                ]}
+                              />
+                            </Col>
+                            <Col span={12}>
                               <Text strong>生成数量：</Text>
                               <Select
                                 value={imageCount}
@@ -706,19 +923,6 @@ function MainApp() {
                                   { value: 1, label: '1张' },
                                   { value: 2, label: '2张' },
                                   { value: 4, label: '4张' },
-                                ]}
-                              />
-                            </Col>
-                            <Col span={8}>
-                              <Text strong>图片质量：</Text>
-                              <Select
-                                value={imageQuality}
-                                onChange={setImageQuality}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: 'standard', label: '标准' },
-                                  { value: 'high', label: '高清' },
-                                  { value: 'ultra', label: '超清' },
                                 ]}
                               />
                             </Col>
@@ -783,11 +987,10 @@ function MainApp() {
                               <Button
                                 type="link"
                                 icon={<DownloadOutlined />}
-                                href={img}
-                                target="_blank"
+                                onClick={() => handleSaveImage(img)}
                                 style={{ marginTop: 8 }}
                               >
-                                下载
+                                保存到本地
                               </Button>
                             </Col>
                           ))}
@@ -948,7 +1151,7 @@ function MainApp() {
                               }}
                             >
                               <Image
-                                src={api.getImageUrl(item.referenceImagePath)}
+                                src={api.getImageUrl(item.referenceImagePath || '')}
                                 alt={item.characterName}
                                 style={{
                                   width: '100%',
@@ -1078,6 +1281,286 @@ function MainApp() {
               测试连接
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title="使用说明"
+        open={helpModalVisible}
+        onCancel={() => setHelpModalVisible(false)}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setHelpModalVisible(false)}>
+            知道了
+          </Button>,
+        ]}
+        width={600}
+      >
+        <div style={{ padding: '8px 0' }}>
+          <Steps
+            current={0}
+            direction="vertical"
+            items={[
+              {
+                title: '第一步：召唤出窗口',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>
+                      如果看不见窗口，按 <Text strong>Ctrl + Shift + P</Text>{' '}
+                      或者点击屏幕右下角的托盘图标（小机器人图标）
+                    </p>
+                  </div>
+                ),
+              },
+              {
+                title: '第二步：输入提示词',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>在输入框中描述你想要生成的画面</p>
+                    <p>
+                      <Text strong>绑定角色：</Text> 在角色名字前加 <Text code>@</Text> 符号，例如：
+                      <br />
+                      <Text code mark>
+                        在森林里@小明 正在跑步
+                      </Text>
+                    </p>
+                  </div>
+                ),
+              },
+              {
+                title: '第三步：解析提示词',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>点击「开始解析」按钮，系统会识别出角色和场景</p>
+                  </div>
+                ),
+              },
+              {
+                title: '第四步：绑定参考图（可选）',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>如果提示词中有 @角色名，系统会提示你上传该角色的图片作为参考</p>
+                    <p>
+                      点击「绑定参考图」→ 选择或上传图片 → 选择类型（人物/场景）→ 点击「确认绑定」
+                    </p>
+                    <p>
+                      <Text strong>从图库选择：</Text> 点击「从图库选择」可以挑选之前已保存的参考图
+                    </p>
+                  </div>
+                ),
+              },
+              {
+                title: '第五步：管理参考图',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>点击导航栏「参考图管理」按钮可以：</p>
+                    <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                      <li>查看所有已绑定的参考图</li>
+                      <li>按类型筛选（人物/场景）</li>
+                      <li>搜索参考图（按角色名或标签）</li>
+                      <li>为参考图添加/移除标签</li>
+                      <li>删除不需要的参考图</li>
+                    </ul>
+                  </div>
+                ),
+              },
+              {
+                title: '第六步：生成图片',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>选择模型（Seedream 或 Banana Pro）和图片尺寸</p>
+                    <p>点击「开始生成」等待图片生成完成</p>
+                    <p>生成完成后可以点击「保存到本地」</p>
+                  </div>
+                ),
+              },
+              {
+                title: '第七步：隐藏窗口',
+                description: (
+                  <div style={{ color: '#666' }}>
+                    <p>
+                      使用完毕后，按 <Text strong>Ctrl + Shift + P</Text>{' '}
+                      可以隐藏窗口（程序会在后台托盘运行）
+                    </p>
+                    <p>或者点击窗口右上角×关闭按钮，窗口会最小化到托盘</p>
+                  </div>
+                ),
+              },
+            ]}
+          />
+
+          <Divider />
+
+          <Alert
+            message="💡 提示"
+            description={
+              <div style={{ color: '#666' }}>
+                <ul style={{ paddingLeft: 20, margin: 0 }}>
+                  <li>托盘图标位置：屏幕右下角任务栏</li>
+                  <li>右键托盘图标可选择「显示窗口」或「退出」</li>
+                  <li>快捷键在电脑任何界面都有效，不用切换到窗口</li>
+                </ul>
+              </div>
+            }
+            type="info"
+            showIcon
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        title="参考图管理"
+        open={referenceModalVisible}
+        onCancel={() => setReferenceModalVisible(false)}
+        footer={null}
+        width={900}
+      >
+        <div style={{ padding: '16px 0' }}>
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={8}>
+              <Input
+                placeholder="搜索角色名或标签"
+                prefix={<SearchOutlined />}
+                value={referenceSearch}
+                onChange={e => setReferenceSearch(e.target.value)}
+                onPressEnter={handleSearchReference}
+                allowClear
+              />
+            </Col>
+            <Col span={8}>
+              <Select
+                placeholder="筛选类型"
+                value={referenceFilterType}
+                onChange={handleFilterTypeChange}
+                style={{ width: '100%' }}
+                allowClear
+                options={[
+                  { value: '人物', label: '人物' },
+                  { value: '场景', label: '场景' },
+                ]}
+              />
+            </Col>
+            <Col span={8}>
+              <Select
+                mode="multiple"
+                placeholder="按标签筛选"
+                value={selectedTags}
+                onChange={tags => {
+                  setSelectedTags(tags);
+                  setTimeout(() => loadReferenceImages(), 0);
+                }}
+                style={{ width: '100%' }}
+                allowClear
+                options={allTags.map(tag => ({ value: tag, label: tag }))}
+              />
+            </Col>
+          </Row>
+
+          <Spin spinning={referenceLoading}>
+            {referenceImages.length > 0 ? (
+              <List
+                grid={{ gutter: 16, column: 3 }}
+                dataSource={referenceImages}
+                renderItem={item => (
+                  <List.Item>
+                    <Card
+                      hoverable
+                      cover={
+                        <div
+                          style={{ height: 150, overflow: 'hidden', borderRadius: '4px 4px 0 0' }}
+                        >
+                          <Image
+                            src={api.getImageUrl(item.referenceImagePath || '')}
+                            alt={item.characterName}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                          />
+                        </div>
+                      }
+                      actions={[
+                        <Popconfirm
+                          title="确认删除"
+                          description="确定要删除这个参考图吗？"
+                          onConfirm={() => handleDeleteReference(item.characterName)}
+                          okText="确定"
+                          cancelText="取消"
+                        >
+                          <DeleteOutlined key="delete" style={{ color: '#ff4d4f' }} />
+                        </Popconfirm>,
+                      ]}
+                    >
+                      <Card.Meta
+                        title={<>@{item.characterName}</>}
+                        description={
+                          <div>
+                            <Tag color={item.imageType === '人物' ? 'blue' : 'green'}>
+                              {item.imageType}
+                            </Tag>
+                            <div style={{ marginTop: 8 }}>
+                              {item.tags && item.tags.length > 0 ? (
+                                <>
+                                  {item.tags.map(tag => (
+                                    <Tag
+                                      key={tag}
+                                      closable
+                                      onClose={() => handleRemoveTag(item.characterName, tag)}
+                                      style={{ marginBottom: 4 }}
+                                    >
+                                      {tag}
+                                    </Tag>
+                                  ))}
+                                  {editingTag === item.characterName ? (
+                                    <Input
+                                      size="small"
+                                      style={{ width: 80 }}
+                                      value={newTag}
+                                      onChange={e => setNewTag(e.target.value)}
+                                      onPressEnter={() => handleAddTag(item.characterName)}
+                                      onBlur={() => handleAddTag(item.characterName)}
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <Tag
+                                      icon={<PlusOutlined />}
+                                      style={{ cursor: 'pointer', marginBottom: 4 }}
+                                      onClick={() => {
+                                        setEditingTag(item.characterName);
+                                        setNewTag('');
+                                      }}
+                                    >
+                                      添加标签
+                                    </Tag>
+                                  )}
+                                </>
+                              ) : (
+                                <Tag
+                                  icon={<PlusOutlined />}
+                                  style={{ cursor: 'pointer' }}
+                                  onClick={() => {
+                                    setEditingTag(item.characterName);
+                                    setNewTag('');
+                                  }}
+                                >
+                                  添加标签
+                                </Tag>
+                              )}
+                            </div>
+                          </div>
+                        }
+                      />
+                    </Card>
+                  </List.Item>
+                )}
+              />
+            ) : (
+              <Empty description="暂无参考图" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            )}
+          </Spin>
+
+          {referenceImages.length > 0 && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Text type="secondary">共 {referenceImages.length} 张参考图</Text>
+            </div>
+          )}
         </div>
       </Modal>
     </ConfigProvider>

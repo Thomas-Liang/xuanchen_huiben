@@ -171,6 +171,21 @@ export async function saveApiConfig(config: APIConfig): Promise<boolean> {
   });
 }
 
+export async function loadApiConfig(): Promise<APIConfig> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<APIConfig>('load_api_config');
+  }
+  const result = await fetchApi<{
+    seedream: { baseUrl: string; apiKey: string };
+    bananaPro: { baseUrl: string; apiKey: string };
+  }>('/api/config/load');
+  return {
+    seedream: result.seedream,
+    bananaPro: result.bananaPro,
+  };
+}
+
 export async function getDefaultApiConfig(): Promise<APIConfig> {
   if (isTauri()) {
     const { invoke } = await import('@tauri-apps/api/core');
@@ -215,10 +230,98 @@ export async function loadGenerationConfig(): Promise<GenerationConfig> {
 }
 
 export function getImageUrl(path: string | undefined | null): string {
-  if (!path) return '';
+  if (!path || path.trim() === '') return '';
   if (path.startsWith('http') || path.startsWith('data:')) return path;
-  const cleanPath = path.replace(/^file:\/\//, '');
+
+  let cleanPath = path.replace(/^file:\/\//, '').replace(/^file:/, '');
+  cleanPath = cleanPath.replace(/\//g, '\\');
+
+  if (isTauri()) {
+    return `http://127.0.0.1:8888/api/image?path=${encodeURIComponent(cleanPath)}`;
+  }
   return `${API_BASE}/api/image?path=${encodeURIComponent(cleanPath)}`;
+}
+
+export async function saveImageToFile(imageUrl: string, filePath: string): Promise<string> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string>('save_image_to_file', { imageUrl, filePath });
+  }
+  throw new Error('Save image only supported in Tauri app');
+}
+
+export async function saveImageDialog(imageUrl: string): Promise<string | null> {
+  if (isTauri()) {
+    const { save } = await import('@tauri-apps/plugin-dialog');
+    const filePath = await save({
+      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    });
+    if (filePath) {
+      return saveImageToFile(imageUrl, filePath);
+    }
+    return null;
+  }
+
+  // Web fallback: Use Blob to bypass cross-origin restrictions on 'download' attribute
+  try {
+    let blob: Blob;
+
+    if (imageUrl.startsWith('data:')) {
+      const parts = imageUrl.split(',');
+      const byteString = atob(parts[1]);
+      const mimeString = parts[0].split(':')[1].split(';')[0];
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+      blob = new Blob([ab], { type: mimeString });
+    } else {
+      const response = await fetch(imageUrl);
+      blob = await response.blob();
+    }
+
+    const blobUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = blobUrl;
+
+    // Determine filename
+    let fileName = `ai-gen-${Date.now()}.png`;
+    if (imageUrl.startsWith('data:')) {
+      const extension = imageUrl.split(';')[0].split('/')[1] || 'png';
+      fileName = `ai-gen-${Date.now()}.${extension}`;
+    } else {
+      try {
+        const url = new URL(imageUrl);
+        const parts = url.pathname.split('/');
+        const lastPart = parts[parts.length - 1];
+        if (lastPart && lastPart.includes('.')) {
+          fileName = lastPart;
+        }
+      } catch (e) { }
+    }
+
+    link.setAttribute('download', fileName);
+    document.body.appendChild(link);
+    link.click();
+
+    // Clean up
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(blobUrl);
+
+    return '已开始下载';
+  } catch (error) {
+    console.error('Web download failed:', error);
+    // If blob fetch fails (e.g. CORS), try direct link as last resort
+    const link = document.createElement('a');
+    link.href = imageUrl;
+    link.target = '_blank';
+    link.setAttribute('download', '');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    return '尝试直接打开下载';
+  }
 }
 
 function normalizeCharacterBinding(b: any): CharacterBinding {
@@ -229,5 +332,82 @@ function normalizeCharacterBinding(b: any): CharacterBinding {
     imageType: b.imageType || b.image_type,
     createdAt: b.createdAt || b.created_at,
     bound: b.bound !== undefined ? b.bound : true,
+    tags: b.tags || [],
   };
+}
+
+export interface ReferenceImageQuery {
+  image_type?: string;
+  search?: string;
+  tags?: string[];
+}
+
+export async function getReferenceImages(query?: ReferenceImageQuery): Promise<CharacterBinding[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const res = await invoke<CharacterBinding[]>('get_reference_images', { query });
+    return res.map(normalizeCharacterBinding);
+  }
+  const params = new URLSearchParams();
+  if (query?.image_type) params.append('image_type', query.image_type);
+  if (query?.search) params.append('search', query.search);
+  if (query?.tags) params.append('tags', query.tags.join(','));
+  const res = await fetchApi<CharacterBinding[]>(`/api/reference-images?${params.toString()}`);
+  return res.map(normalizeCharacterBinding);
+}
+
+export async function searchReferenceImages(keyword: string): Promise<CharacterBinding[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const res = await invoke<CharacterBinding[]>('search_reference_images', { keyword });
+    return res.map(normalizeCharacterBinding);
+  }
+  const res = await fetchApi<CharacterBinding[]>('/api/reference-images/search', {
+    keyword,
+  });
+  return res.map(normalizeCharacterBinding);
+}
+
+export async function addTagToReference(characterName: string, tag: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('add_tag_to_reference', { characterName, tag });
+  }
+  return fetchApi<boolean>('/api/reference-images/add-tag', { characterName, tag });
+}
+
+export async function removeTagFromReference(characterName: string, tag: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('remove_tag_from_reference', { characterName, tag });
+  }
+  return fetchApi<boolean>('/api/reference-images/remove-tag', { characterName, tag });
+}
+
+export async function getAllTags(): Promise<string[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<string[]>('get_all_tags');
+  }
+  return fetchApi<string[]>('/api/reference-images/tags');
+}
+
+export async function getReferencesByType(imageType: string): Promise<CharacterBinding[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const res = await invoke<CharacterBinding[]>('get_references_by_type', { imageType });
+    return res.map(normalizeCharacterBinding);
+  }
+  const res = await fetchApi<CharacterBinding[]>('/api/reference-images/by-type', {
+    imageType,
+  });
+  return res.map(normalizeCharacterBinding);
+}
+
+export async function deleteReferenceImage(characterName: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<boolean>('delete_reference_image', { characterName });
+  }
+  return fetchApi<boolean>('/api/reference-images/delete', { characterName });
 }

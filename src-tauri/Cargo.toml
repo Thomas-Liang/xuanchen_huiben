@@ -1,7 +1,7 @@
 [package]
 name = "xuanchen-huiben"
 version = "0.1.0"
-description = "AI绘画桌面应用"
+description = "泫晨懿然·灵犀绘梦桌面应用"
 authors = ["you"]
 edition = "2021"
 
@@ -13,10 +13,25 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
 once_cell = "1"
-
+base64 = "0.22"
+axum = { version = "0.8.8", features = ["macros"] }
+tokio = { version = "1.49.0", features = ["full"] }
+axum_cors = "0.1.7"
+tower-http = { version = "0.6.8", features = ["cors"] }
+chrono = "0.4"
+dirs = "5"
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+image = "0.24"
+aes-gcm = "0.10"
+rand = "0.8"
+sha2 = "0.10"
+pbkdf2 = "0.12"

@@ -5,7 +5,10 @@ use axum::{
 use tower_http::cors::{Any, CorsLayer};
 use serde::Deserialize;
 
-use crate::commands::character_binding::{CharacterBinding, CHARACTER_BINDINGS};
+use crate::commands::character_binding::{
+    delete_reference_image, get_all_tags, get_references_by_type, get_reference_images, search_reference_images, CharacterBinding, CHARACTER_BINDINGS,
+    ReferenceImageQuery,
+};
 use crate::commands::prompt_parser::parse_prompt_internal;
 use crate::commands::prompt_parser::ParsedPrompt;
 use crate::commands::image_generator::{
@@ -21,7 +24,23 @@ pub async fn api_get_image(
     axum::extract::Query(query): axum::extract::Query<ImageQuery>
 ) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
     eprintln!("api_get_image: Start reading path: '{}'", query.path);
-    match std::fs::read(&query.path) {
+    
+    let mut path = query.path.clone();
+    
+    path = path.replace("file:///", "");
+    path = path.replace("file://", "");
+    path = path.replace("file:/", "");
+    path = path.replace('/', "\\");
+    path = path.replace("%5C", "\\");
+    
+    eprintln!("api_get_image: reading: '{}'", path);
+    
+    if path.is_empty() {
+        eprintln!("api_get_image: empty path");
+        return Err(axum::http::StatusCode::NOT_FOUND);
+    }
+    
+    match std::fs::read(&path) {
         Ok(data) => {
             eprintln!("api_get_image: success, format size: {}", data.len());
             let path_lower = query.path.to_lowercase();
@@ -47,6 +66,67 @@ pub async fn api_get_image(
             Err(axum::http::StatusCode::NOT_FOUND)
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReferenceImageQueryHttp {
+    image_type: Option<String>,
+    search: Option<String>,
+    tags: Option<String>,
+}
+
+pub async fn api_get_reference_images_handler(
+    axum::extract::Query(query): axum::extract::Query<ReferenceImageQueryHttp>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let query = ReferenceImageQuery {
+        image_type: query.image_type,
+        search: query.search,
+        tags: query.tags.map(|t| t.split(',').map(|s| s.to_string()).collect()),
+    };
+    let images = get_reference_images(Some(query));
+    Ok(axum::Json(images))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SearchBody {
+    keyword: String,
+}
+
+pub async fn api_search_reference_images_handler(
+    axum::Json(body): axum::Json<SearchBody>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let images = search_reference_images(body.keyword);
+    Ok(axum::Json(images))
+}
+
+pub async fn api_get_all_tags_handler() -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let tags = get_all_tags();
+    Ok(axum::Json(tags))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ByTypeBody {
+    image_type: String,
+}
+
+pub async fn api_get_references_by_type_handler(
+    axum::Json(body): axum::Json<ByTypeBody>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let images = get_references_by_type(body.image_type);
+    Ok(axum::Json(images))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteReferenceBody {
+    #[serde(alias = "characterName", alias = "character_name")]
+    character_name: String,
+}
+
+pub async fn api_delete_reference_image_handler(
+    axum::Json(body): axum::Json<DeleteReferenceBody>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let result = delete_reference_image(body.character_name);
+    Ok(axum::Json(result))
 }
 
 #[derive(Debug, Deserialize)]
@@ -85,9 +165,13 @@ pub struct UnbindBody {
     character_name: String,
 }
 
-async fn api_parse_prompt(axum::Json(body): axum::Json<ParseBody>) -> Result<axum::Json<ParsedPrompt>, String> {
-    let result = parse_prompt_internal(&body.prompt).map_err(|e| e.to_string())?;
-    Ok(axum::Json(result))
+async fn api_parse_prompt(axum::Json(body): axum::Json<ParseBody>) -> Result<axum::Json<ParsedPrompt>, (axum::http::StatusCode, String)> {
+    parse_prompt_internal(&body.prompt)
+        .map(axum::Json)
+        .map_err(|e| {
+            eprintln!("api_parse_prompt error: {}", e);
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e)
+        })
 }
 
 async fn api_get_all_bindings() -> Result<axum::Json<Vec<CharacterBinding>>, String> {
@@ -213,12 +297,18 @@ async fn api_generate_image(
         }),
     };
     
-    let result = generate_image(params).await.unwrap_or(ImageGenerationResult {
-        success: false,
-        images: vec![],
-        error: Some("生成失败".to_string()),
-        task_id: String::new(),
-    });
+    let result = match generate_image(params).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("generate_image error: {}", e);
+            ImageGenerationResult {
+                success: false,
+                images: vec![],
+                error: Some(e),
+                task_id: String::new(),
+            }
+        }
+    };
     eprintln!("generate_image result: {:?}", result);
     Ok(axum::Json(result))
 }
@@ -226,6 +316,7 @@ async fn api_generate_image(
 #[derive(Debug, Deserialize)]
 pub struct ApiConfigBody {
     seedream: Option<ModelConfigBody>,
+    #[serde(alias = "bananaPro")]
     banana_pro: Option<ModelConfigBody>,
 }
 
@@ -275,6 +366,31 @@ async fn api_get_default_config(
     Ok(axum::Json(json))
 }
 
+async fn api_load_config(
+) -> Result<axum::Json<serde_json::Value>, String> {
+    use crate::commands::image_generator::load_api_config;
+    
+    match load_api_config() {
+        Ok(config) => {
+            let json = serde_json::json!({
+                "seedream": {
+                    "baseUrl": config.seedream.base_url,
+                    "apiKey": config.seedream.api_key,
+                },
+                "bananaPro": {
+                    "baseUrl": config.banana_pro.base_url,
+                    "apiKey": config.banana_pro.api_key,
+                }
+            });
+            Ok(axum::Json(json))
+        }
+        Err(e) => {
+            eprintln!("Failed to load config: {}", e);
+            Err(e)
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct GenerationConfigBody {
     model: String,
@@ -317,8 +433,8 @@ async fn api_load_generation_config() -> Result<axum::Json<crate::commands::imag
     use crate::commands::image_generator::{load_generation_config, GenerationConfig};
     let result = load_generation_config().unwrap_or(GenerationConfig {
         model: "seedream".to_string(),
-        width: 1024,
-        height: 1024,
+        width: 1,
+        height: 1,
         count: 1,
         quality: "standard".to_string(),
         size: Some("1024x1024".to_string()),
@@ -372,11 +488,17 @@ pub fn create_api_router() -> Router {
         .route("/api/generate", post(api_generate_image))
         .route("/api/image", get(api_get_image))
         .route("/api/config/save", post(api_save_config))
+        .route("/api/config/load", get(api_load_config))
         .route("/api/config/default", get(api_get_default_config))
         .route("/api/test-connection", post(api_test_connection))
         .route("/api/generation-config/save", post(api_save_generation_config))
         .route("/api/generation-config/load", get(api_load_generation_config))
         .route("/api/generation-config/default", get(api_get_default_generation_config))
+        .route("/api/reference-images", get(api_get_reference_images_handler))
+        .route("/api/reference-images/search", post(api_search_reference_images_handler))
+        .route("/api/reference-images/tags", get(api_get_all_tags_handler))
+        .route("/api/reference-images/by-type", post(api_get_references_by_type_handler))
+        .route("/api/reference-images/delete", post(api_delete_reference_image_handler))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors)
 }

@@ -5,21 +5,28 @@
   "identifier": "com.xuanchen.huiben",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1421",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
-        "title": "AI绘画",
+        "title": "泫晨懿然·灵犀绘梦",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
         "minHeight": 600,
-        "center": true
+        "center": true,
+        "decorations": true,
+        "resizable": true,
+        "visible": true
       }
     ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false
+    },
     "security": {
       "csp": null
     }
@@ -34,5 +41,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  }
+  },
+  "plugins": {}
 }

@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    xuanchen_huiben_lib::run()
+    xuanchen_huiben_lib::main()
 }

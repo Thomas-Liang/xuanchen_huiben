@@ -1,6 +1,6 @@
-# 🎨 AI绘画助手
+# 🎨 泫晨懿然·灵犀绘梦助手
 
-> 基于 Tauri + React 开发的 AI 绘画桌面应用，支持 Seedream 和 Banana Pro 两大 AI 绘画模型
+> 基于 Tauri + React 开发的灵犀绘梦桌面应用，支持 Seedream 和 Banana Pro 两大 AI 绘画模型
 
 ![Tauri](https://img.shields.io/badge/Tauri-2.x-blue)
 ![React](https://img.shields.io/badge/React-19-blue)
