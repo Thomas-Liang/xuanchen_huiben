@@ -483,7 +483,7 @@ async fn call_banana_pro_api(
     eprintln!("Banana Pro API request body: {:?}", request_body);
     
     let url = format!(
-        "{}/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        "{}/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key={}",
         config.base_url, config.api_key
     );
     eprintln!("Banana Pro API URL: {}", url);
