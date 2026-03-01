@@ -188,6 +188,11 @@ body {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
 }
 
+.batch-result-card {
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid #e2e8f0;
+}
+
 .original-card .original-text {
   font-size: 15px;
   line-height: 1.8;
@@ -218,10 +223,12 @@ body {
   background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
   border-radius: 12px;
   transition: all 0.2s;
+  border: 1px solid #bae6fd;
 }
 
 .character-item:hover {
   transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
 }
 
 .character-avatar {
@@ -386,6 +393,26 @@ body {
 .scene-description {
   color: #334155;
   line-height: 1.6;
+}
+
+.scene-result-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.scene-img-wrapper {
+  position: relative;
+  display: inline-block;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+}
+
+.scene-img-wrapper:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
 .characters-section {

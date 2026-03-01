@@ -754,12 +754,12 @@ function MainApp() {
               泫晨懿然·灵犀绘梦助手
             </Title>
           </div>
-          <Space>
+          <Space size={12}>
             <Button
               type="text"
               icon={<SettingOutlined />}
               onClick={() => setConfigModalVisible(true)}
-              style={{ color: '#fff' }}
+              style={{ color: '#fff', height: 36 }}
             >
               API配置
             </Button>
@@ -767,29 +767,31 @@ function MainApp() {
               type="text"
               icon={<PictureOutlined />}
               onClick={openReferenceModal}
-              style={{ color: '#fff' }}
+              style={{ color: '#fff', height: 36 }}
             >
-              参考图管理
+              参考图库
             </Button>
             <Button
               type="text"
               icon={<QuestionCircleOutlined />}
               onClick={() => setHelpModalVisible(true)}
-              style={{ color: '#fff' }}
+              style={{ color: '#fff', height: 36 }}
             >
-              使用说明
+              使用帮助
             </Button>
           </Space>
         </Header>
         <Content className="app-content">
           <div className="main-container">
             <Card className="prompt-card" variant="borderless">
-              <div className="card-header">
+              <div className="card-header" style={{ justifyContent: 'space-between' }}>
                 <Title level={5} className="card-title">
                   输入提示词
                 </Title>
-                <Space>
-                  <Text type="secondary">批量模式</Text>
+                <Space size="middle">
+                  <span style={{ color: '#6366f1', fontWeight: 500 }}>
+                    {batchMode ? '批量模式' : '单图模式'}
+                  </span>
                   <Switch
                     checked={batchMode}
                     onChange={setBatchMode}
@@ -802,28 +804,39 @@ function MainApp() {
               {batchMode && (
                 <div
                   className="batch-config"
-                  style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}
+                  style={{
+                    marginBottom: 16,
+                    padding: '12px 16px',
+                    background: 'linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)',
+                    borderRadius: 12,
+                    border: '1px solid #bae6fd',
+                  }}
                 >
-                  <Row gutter={16}>
-                    <Col span={8}>
-                      <Text strong>分隔符：</Text>
-                      <Input
-                        value={batchDelimiter}
-                        onChange={e => setBatchDelimiter(e.target.value)}
-                        placeholder="如 | 或 ;; 或 ---"
-                        style={{ marginTop: 4 }}
-                      />
+                  <Row gutter={16} align="middle">
+                    <Col span={10}>
+                      <Space>
+                        <Tag color="blue">分隔符</Tag>
+                        <Input
+                          value={batchDelimiter}
+                          onChange={e => setBatchDelimiter(e.target.value)}
+                          placeholder="| 或 ;; 或 ---"
+                          style={{ width: 120 }}
+                          size="small"
+                        />
+                      </Space>
                     </Col>
-                    <Col span={8}>
-                      <Text strong>自动识别：</Text>
-                      <Switch
-                        checked={batchAutoDetect}
-                        onChange={setBatchAutoDetect}
-                        style={{ marginTop: 8 }}
-                      />
-                      <Text type="secondary" style={{ marginLeft: 8 }}>
-                        自动识别场景
-                      </Text>
+                    <Col span={14}>
+                      <Space>
+                        <Tag color="purple">自动识别</Tag>
+                        <Switch
+                          checked={batchAutoDetect}
+                          onChange={setBatchAutoDetect}
+                          size="small"
+                        />
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          智能拆分场景
+                        </Text>
+                      </Space>
                     </Col>
                   </Row>
                 </div>
@@ -917,20 +930,28 @@ function MainApp() {
             {batchMode && (
               <Spin spinning={batchSplitLoading}>
                 {batchSplitResult && (
-                  <Card className="result-card" variant="borderless" style={{ marginTop: 16 }}>
-                    <div className="card-header">
-                      <AppstoreOutlined />
-                      <Title level={5} className="card-title">
-                        批量拆分结果
-                      </Title>
+                  <Card
+                    className="result-card batch-result-card"
+                    variant="borderless"
+                    style={{ marginTop: 16 }}
+                  >
+                    <div className="card-header" style={{ flexWrap: 'wrap', gap: 12 }}>
                       <Space>
-                        <Tag color="blue">{batchSplitResult.total} 个场景</Tag>
+                        <AppstoreOutlined style={{ color: '#6366f1', fontSize: 18 }} />
+                        <Title level={5} className="card-title">
+                          批量拆分结果
+                        </Title>
+                        <Tag color="blue" style={{ marginLeft: 8 }}>
+                          {batchSplitResult.total} 个场景
+                        </Tag>
+                      </Space>
+                      <Space>
                         <Button
                           size="small"
                           icon={<SettingOutlined />}
                           onClick={() => setBatchGenModalVisible(true)}
                         >
-                          设置
+                          生成设置
                         </Button>
                         <Button
                           type="primary"
@@ -938,9 +959,13 @@ function MainApp() {
                           icon={<PlayCircleOutlined />}
                           loading={batchGenerating}
                           onClick={handleBatchGenerate}
+                          style={{
+                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                            border: 'none',
+                          }}
                         >
                           {batchGenerating
-                            ? `正在生成 (${batchProgress?.current}/${batchProgress?.total})`
+                            ? `生成中 (${batchProgress?.current}/${batchProgress?.total})`
                             : '全部生图'}
                         </Button>
                       </Space>
