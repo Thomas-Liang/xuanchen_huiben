@@ -363,6 +363,8 @@ pub async fn generate_image(
     // Only pass Some if we actually loaded reference images
     let final_images = if api_images.is_empty() { None } else { Some(api_images) };
     
+    eprintln!("[Banana Pro] final_images count: {:?}", final_images.as_ref().map(|v| v.len()));
+    
     let prompt = build_prompt_with_bindings(&params);
     
     let result = match params.model.as_str() {
@@ -406,9 +408,24 @@ pub async fn generate_image(
 }
 
 fn build_prompt_with_bindings(params: &ImageGenerationParams) -> String {
-    // For Banana 2 (Gemini API), reference images are sent separately via inlineData
-    // So we just return the original prompt without adding binding info
-    params.prompt.clone()
+    let mut final_prompt = params.prompt.clone();
+    
+    // For Banana 2 (Gemini API), we add reference image type info to the prompt
+    // This helps the API understand whether it's a face, full body, or character reference
+    for binding in &params.character_bindings {
+        if let Some(ref_path) = &binding.reference_image_path {
+            if !ref_path.is_empty() {
+                final_prompt = format!(
+                    "{} [{}: {}]",
+                    final_prompt,
+                    binding.character_name,
+                    binding.image_type
+                );
+            }
+        }
+    }
+    
+    final_prompt
 }
 
 async fn call_banana_pro_api(
@@ -429,6 +446,8 @@ async fn call_banana_pro_api(
         1025..=2048 => "2K",
         _ => "4K",
     };
+    
+    eprintln!("[Banana Pro] Received images count: {:?}", images.as_ref().map(|v| v.len()));
     
     // Build parts with optional reference images
     let mut parts: Vec<serde_json::Value> = Vec::new();
