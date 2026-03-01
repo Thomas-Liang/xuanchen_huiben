@@ -406,22 +406,9 @@ pub async fn generate_image(
 }
 
 fn build_prompt_with_bindings(params: &ImageGenerationParams) -> String {
-    let mut final_prompt = params.prompt.clone();
-    
-    for binding in &params.character_bindings {
-        if let Some(ref_path) = &binding.reference_image_path {
-            if !ref_path.is_empty() {
-                final_prompt = format!(
-                    "{} [{}: {}]",
-                    final_prompt,
-                    binding.character_name,
-                    ref_path
-                );
-            }
-        }
-    }
-    
-    final_prompt
+    // For Banana 2 (Gemini API), reference images are sent separately via inlineData
+    // So we just return the original prompt without adding binding info
+    params.prompt.clone()
 }
 
 async fn call_banana_pro_api(
@@ -449,14 +436,22 @@ async fn call_banana_pro_api(
     // Add reference images if any
     if let Some(ref imgs) = images {
         for img in imgs {
-            let img_data = if img.starts_with("data:") {
-                img.split(',').nth(1).unwrap_or(img.as_str()).to_string()
+            let (img_data, mime_type) = if img.starts_with("data:") {
+                // Extract mime type and data from data URL
+                if img.starts_with("data:image/jpeg") || img.starts_with("data:image/jpg") {
+                    (img.split(',').nth(1).unwrap_or(img.as_str()).to_string(), "image/jpeg")
+                } else if img.starts_with("data:image/png") {
+                    (img.split(',').nth(1).unwrap_or(img.as_str()).to_string(), "image/png")
+                } else {
+                    // Default to jpeg for base64 without prefix
+                    (img.clone(), "image/jpeg")
+                }
             } else {
-                img.clone()
+                (img.clone(), "image/jpeg")
             };
             parts.push(serde_json::json!({
                 "inlineData": {
-                    "mimeType": "image/png",
+                    "mimeType": mime_type,
                     "data": img_data
                 }
             }));
