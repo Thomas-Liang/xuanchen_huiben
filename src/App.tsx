@@ -938,7 +938,7 @@ function MainApp() {
                         expandIconPosition="end"
                         className="premium-collapse"
                         items={batchSplitResult.segments.map((seg, idx) => ({
-                          key: idx,
+                          key: `segment-${seg.index}`,
                           label: (
                             <div className="segment-header-flex">
                               <Space>
@@ -950,8 +950,8 @@ function MainApp() {
                                 </Text>
                               </Space>
                               <div className="segment-characters-preview">
-                                {seg.characters.map((char, cidx) => (
-                                  <Tag key={cidx} color="blue">
+                                {seg.characters.map(char => (
+                                  <Tag key={char.name} color="blue">
                                     @{char.name}
                                   </Tag>
                                 ))}
@@ -977,10 +977,10 @@ function MainApp() {
                                   主角色与参考图绑定
                                 </Title>
                                 <div className="character-list">
-                                  {seg.characters.map((char, cidx) => {
+                                  {seg.characters.map(char => {
                                     const binding = characterBindings[char.name];
                                     return (
-                                      <div key={cidx} className="character-item">
+                                      <div key={char.name} className="character-item">
                                         <div className="character-avatar">
                                           {binding?.referenceImagePath ? (
                                             <img
