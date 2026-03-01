@@ -306,3 +306,134 @@ body {
     padding: 16px;
   }
 }
+
+.batch-segments-container {
+  margin-top: 16px;
+}
+
+.premium-collapse {
+  background: transparent !important;
+}
+
+.segment-panel {
+  margin-bottom: 12px !important;
+  background: white !important;
+  border: 1px solid #e5e7eb !important;
+  border-radius: 12px !important;
+  overflow: hidden;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.segment-panel:hover {
+  border-color: #6366f1 !important;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.08);
+}
+
+.segment-header-flex {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding-right: 12px;
+}
+
+.segment-preview {
+  color: #4b5563;
+  font-weight: 500;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.segment-characters-preview {
+  display: flex;
+  gap: 4px;
+}
+
+.segment-expanded-content {
+  padding: 4px 12px;
+}
+
+.info-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #94a3b8;
+}
+
+.content-box {
+  background: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #f1f5f9;
+  margin-bottom: 0 !important;
+}
+
+.scene-description {
+  color: #334155;
+  line-height: 1.6;
+}
+
+.characters-section {
+  padding-bottom: 12px;
+}
+
+.segment-character-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.segment-char-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #f1f5f9;
+  border-radius: 10px;
+  transition: all 0.2s;
+}
+
+.mini-char-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 14px;
+  overflow: hidden;
+}
+
+.mini-char-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.mini-char-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.mini-bind-btn {
+  font-size: 11px;
+}

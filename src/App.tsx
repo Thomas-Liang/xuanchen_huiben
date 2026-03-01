@@ -4,6 +4,8 @@ import {
   ConfigProvider,
   Layout,
   Input,
+  InputNumber,
+  Switch,
   Button,
   Card,
   Typography,
@@ -12,6 +14,7 @@ import {
   Empty,
   Spin,
   Modal,
+  Collapse,
   Radio,
   Tabs,
   List,
@@ -47,6 +50,7 @@ import type {
   ImageGenerationResult,
   APIConfig,
   GenerationConfig,
+  BatchSplitResult,
 } from './types';
 import * as api from './api';
 import type { ReferenceImageQuery } from './api';
@@ -124,6 +128,16 @@ function MainApp() {
     bananaPro: { baseUrl: '', apiKey: '' },
   });
   const [testingApi, setTestingApi] = useState<'seedream' | 'banana_pro' | null>(null);
+
+  const [batchMode, setBatchMode] = useState(false);
+  const [batchDelimiter, setBatchDelimiter] = useState('|');
+  const [batchAutoDetect, setBatchAutoDetect] = useState(true);
+  const [batchSplitResult, setBatchSplitResult] = useState<BatchSplitResult | null>(null);
+  const [batchSplitLoading, setBatchSplitLoading] = useState(false);
+  const [batchGenerating, setBatchGenerating] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<any>(null);
+  const [concurrency, setConcurrency] = useState(2);
+  const [batchGenModalVisible, setBatchGenModalVisible] = useState(false);
 
   useEffect(() => {
     console.log('App loaded, checking Tauri...');
@@ -228,6 +242,120 @@ function MainApp() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleBatchSplit = async () => {
+    if (!prompt.trim()) {
+      message.warning('请输入提示词');
+      return;
+    }
+
+    console.log('[BatchSplit] params:', { prompt, batchDelimiter, batchAutoDetect });
+    setBatchSplitLoading(true);
+    try {
+      const result = await api.batchSplitPrompt(prompt, batchDelimiter, batchAutoDetect);
+      setBatchSplitResult(result);
+      message.success(`拆分成功，共${result.total}个场景`);
+    } catch (error) {
+      console.error('[BatchSplit] error:', error);
+      message.error(`拆分失败: ${error}`);
+    } finally {
+      setBatchSplitLoading(false);
+    }
+  };
+
+  const handleBatchGenerate = async () => {
+    if (!batchSplitResult) return;
+
+    setBatchGenerating(true);
+    const total = batchSplitResult.segments.length;
+    const initialProgress: any = {
+      total,
+      current: 0,
+      sceneResults: batchSplitResult.segments.map(seg => ({
+        index: seg.index,
+        status: 'pending',
+      })),
+    };
+    setBatchProgress(initialProgress);
+
+    let width: number, height: number;
+    if (selectedModel === 'seedream') {
+      const [w, h] = seedreamSize.split('x').map(Number);
+      width = w;
+      height = h;
+    } else {
+      const baseResolution =
+        bananaResolution === '4K' ? 4096 : bananaResolution === '2K' ? 2048 : 1024;
+      const ratio = imageSize.width / imageSize.height;
+      if (ratio >= 1) {
+        width = baseResolution;
+        height = Math.round(baseResolution / ratio);
+      } else {
+        height = baseResolution;
+        width = Math.round(baseResolution * ratio);
+      }
+    }
+
+    const concurrencyLimit = concurrency;
+    const tasks = [...batchSplitResult.segments];
+
+    const runTask = async (seg: any, idx: number) => {
+      setBatchProgress((prev: any) => {
+        if (!prev) return prev;
+        const newResults = [...prev.sceneResults];
+        newResults[idx] = { ...newResults[idx], status: 'generating' };
+        return { ...prev, sceneResults: newResults };
+      });
+
+      try {
+        const params: ImageGenerationParams = {
+          model: selectedModel,
+          prompt: seg.content,
+          characterBindings: seg.characters.map((char: any) => {
+            const b = characterBindings[char.name];
+            return {
+              character_name: char.name,
+              reference_image_path: b?.referenceImagePath,
+              image_type: b?.imageType || '人物',
+            };
+          }),
+          width,
+          height,
+          count: 1,
+          quality: imageQuality,
+          watermark: selectedModel === 'seedream' ? watermark === 'true' : undefined,
+        };
+
+        const result = await api.generateImage(params);
+
+        setBatchProgress((prev: any) => {
+          if (!prev) return prev;
+          const newResults = [...prev.sceneResults];
+          newResults[idx] = {
+            ...newResults[idx],
+            status: result.success ? 'completed' : 'failed',
+            result: result,
+          };
+          return { ...prev, current: prev.current + 1, sceneResults: newResults };
+        });
+      } catch (err) {
+        setBatchProgress((prev: any) => {
+          if (!prev) return prev;
+          const newResults = [...prev.sceneResults];
+          newResults[idx] = { ...newResults[idx], status: 'failed' };
+          return { ...prev, current: prev.current + 1, sceneResults: newResults };
+        });
+      }
+    };
+
+    for (let i = 0; i < tasks.length; i += concurrencyLimit) {
+      const chunk = tasks.slice(i, i + concurrencyLimit);
+      await Promise.all(chunk.map((task, chunkIdx) => runTask(task, i + chunkIdx)));
+    }
+
+    setBatchGenerating(false);
+    message.success('批量生成任务已完成');
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -459,7 +587,7 @@ function MainApp() {
     try {
       const config = model === 'banana_pro' ? apiConfig.bananaPro : apiConfig.seedream;
       await api.testApiConnection(model, config.baseUrl, config.apiKey);
-      message.success(`${model === 'seedream' ? 'Seeddream' : 'Banana Pro'} API连接成功`);
+      message.success(`${model === 'seedream' ? 'Seeddream' : 'Banana 2'} API连接成功`);
     } catch (error) {
       message.error(`连接失败: ${error}`);
     } finally {
@@ -601,6 +729,19 @@ function MainApp() {
     '海边的日落@英雄 站在礁石上',
   ];
 
+  const batchExamplePrompts = {
+    singleLine: [
+      '在森林里@小明 跑步 | 海边@女孩 散步 | 山上@英雄',
+      '@小明 和@小红 在公园 | @女孩 在学校 | @英雄 在城堡',
+      '场景1：森林里@小明 场景2：海边@女孩 场景3：山上@英雄',
+    ],
+    multiLine: [
+      '在森林里@小明 正在愉快地跑步\n海边@女孩 正在散步\n山上@英雄 站在礁石上',
+      '@小明 在房间看书\n@女孩 在厨房做饭\n@英雄 在花园练剑',
+      '场景1：在森林里@小明\n场景2：海边@女孩\n场景3：山上@英雄',
+    ],
+  };
+
   return (
     <ConfigProvider theme={themeConfig}>
       <Layout className="app-layout">
@@ -613,6 +754,14 @@ function MainApp() {
             </Title>
           </div>
           <Space>
+            <Button
+              type="text"
+              icon={<SettingOutlined />}
+              onClick={() => setConfigModalVisible(true)}
+              style={{ color: '#fff' }}
+            >
+              API配置
+            </Button>
             <Button
               type="text"
               icon={<PictureOutlined />}
@@ -638,385 +787,778 @@ function MainApp() {
                 <Title level={5} className="card-title">
                   输入提示词
                 </Title>
-                <Text type="secondary">使用 @角色名 绑定参考图</Text>
+                <Space>
+                  <Text type="secondary">批量模式</Text>
+                  <Switch
+                    checked={batchMode}
+                    onChange={setBatchMode}
+                    checkedChildren="批量"
+                    unCheckedChildren="单图"
+                  />
+                </Space>
               </div>
+
+              {batchMode && (
+                <div
+                  className="batch-config"
+                  style={{ marginBottom: 16, padding: 12, background: '#f5f5f5', borderRadius: 8 }}
+                >
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Text strong>分隔符：</Text>
+                      <Input
+                        value={batchDelimiter}
+                        onChange={e => setBatchDelimiter(e.target.value)}
+                        placeholder="如 | 或 ;; 或 ---"
+                        style={{ marginTop: 4 }}
+                      />
+                    </Col>
+                    <Col span={8}>
+                      <Text strong>自动识别：</Text>
+                      <Switch
+                        checked={batchAutoDetect}
+                        onChange={setBatchAutoDetect}
+                        style={{ marginTop: 8 }}
+                      />
+                      <Text type="secondary" style={{ marginLeft: 8 }}>
+                        自动识别场景
+                      </Text>
+                    </Col>
+                  </Row>
+                </div>
+              )}
+
               <TextArea
                 value={prompt}
                 onChange={e => setPrompt(e.target.value)}
-                placeholder="描述你的画面，如：在森林里@小明 正在跑步..."
-                rows={4}
+                placeholder={
+                  batchMode
+                    ? '输入多个场景，用分隔符分开，如：场景1描述 | 场景2描述 | 场景3描述'
+                    : '描述你的画面，如：在森林里@小明 正在跑步...'
+                }
+                rows={batchMode ? 6 : 4}
                 className="prompt-input"
-                maxLength={500}
+                maxLength={batchMode ? 2000 : 500}
                 showCount
               />
               <div className="prompt-actions">
-                <Button
-                  type="primary"
-                  onClick={handleParse}
-                  loading={loading}
-                  size="large"
-                  icon={<PlayCircleOutlined />}
-                  className="parse-btn"
-                >
-                  开始解析
-                </Button>
+                {batchMode ? (
+                  <Button
+                    type="primary"
+                    onClick={handleBatchSplit}
+                    loading={batchSplitLoading}
+                    size="large"
+                    icon={<AppstoreOutlined />}
+                    className="parse-btn"
+                  >
+                    拆分场景
+                  </Button>
+                ) : (
+                  <Button
+                    type="primary"
+                    onClick={handleParse}
+                    loading={loading}
+                    size="large"
+                    icon={<PlayCircleOutlined />}
+                    className="parse-btn"
+                  >
+                    开始解析
+                  </Button>
+                )}
               </div>
               <div className="example-prompts">
                 <Text type="secondary" className="example-label">
                   试试看：
                 </Text>
                 <Space wrap>
-                  {examplePrompts.map((example, idx) => (
-                    <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
-                      {example.slice(0, 20)}...
-                    </Tag>
-                  ))}
+                  {batchMode ? (
+                    <>
+                      <Text type="secondary" style={{ marginRight: 8 }}>
+                        单行：
+                      </Text>
+                      {batchExamplePrompts.singleLine.map((example, idx) => (
+                        <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
+                          {example.slice(0, 20)}...
+                        </Tag>
+                      ))}
+                      <Text type="secondary" style={{ marginRight: 8, marginLeft: 16 }}>
+                        多行：
+                      </Text>
+                      {batchExamplePrompts.multiLine.map((example, idx) => (
+                        <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
+                          {example.slice(0, 20)}...
+                        </Tag>
+                      ))}
+                    </>
+                  ) : (
+                    examplePrompts.map((example, idx) => (
+                      <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
+                        {example.slice(0, 20)}...
+                      </Tag>
+                    ))
+                  )}
                 </Space>
               </div>
             </Card>
 
-            <Spin spinning={loading}>
-              {parsedResult ? (
-                <div className="results-container">
-                  <Card className="result-card original-card" variant="borderless">
+            {batchMode && (
+              <Spin spinning={batchSplitLoading}>
+                {batchSplitResult && (
+                  <Card className="result-card" variant="borderless" style={{ marginTop: 16 }}>
                     <div className="card-header">
+                      <AppstoreOutlined />
                       <Title level={5} className="card-title">
-                        原始提示词
+                        批量拆分结果
                       </Title>
-                    </div>
-                    <Paragraph className="original-text" copyable>
-                      {parsedResult.original}
-                    </Paragraph>
-                  </Card>
-
-                  <div className="results-grid">
-                    {parsedResult.characters.length > 0 && (
-                      <Card className="result-card" variant="borderless">
-                        <div className="card-header">
-                          <UserOutlined />
-                          <Title level={5} className="card-title">
-                            角色
-                          </Title>
-                          <Tag color="blue">{parsedResult.characters.length}</Tag>
-                        </div>
-                        <div className="character-list">
-                          {parsedResult.characters.map((char, idx) => {
-                            const binding = characterBindings[char.name];
-                            return (
-                              <div key={idx} className="character-item">
-                                <div className="character-avatar">
-                                  {binding?.referenceImagePath &&
-                                  binding.referenceImagePath.trim() !== '' ? (
-                                    <img
-                                      src={api.getImageUrl(binding.referenceImagePath || '')}
-                                      alt={char.name}
-                                      style={{
-                                        width: '100%',
-                                        height: '100%',
-                                        objectFit: 'cover',
-                                        borderRadius: '50%',
-                                      }}
-                                    />
-                                  ) : (
-                                    char.name.charAt(0).toUpperCase()
-                                  )}
-                                </div>
-                                <div className="character-info">
-                                  <Text strong>@{char.name}</Text>
-                                  <Tag
-                                    color={char.bound ? 'green' : 'default'}
-                                    className="bind-tag"
-                                    icon={char.bound ? <CheckCircleFilled /> : null}
-                                  >
-                                    {char.bound ? '已绑定' : '未绑定'}
-                                  </Tag>
-                                </div>
-                                <div className="character-actions">
-                                  {char.bound ? (
-                                    <Button
-                                      size="small"
-                                      danger
-                                      icon={<DeleteOutlined />}
-                                      onClick={() => handleUnbind(char.name)}
-                                    >
-                                      解绑
-                                    </Button>
-                                  ) : (
-                                    <Button
-                                      size="small"
-                                      type="primary"
-                                      icon={<UploadOutlined />}
-                                      onClick={() => openBindingModal(char.name)}
-                                    >
-                                      绑定参考图
-                                    </Button>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </Card>
-                    )}
-
-                    {parsedResult.segments.length > 0 && (
-                      <Card className="result-card" variant="borderless">
-                        <div className="card-header">
-                          <AppstoreOutlined />
-                          <Title level={5} className="card-title">
-                            内容分段
-                          </Title>
-                          <Tag color="purple">{parsedResult.segments.length}</Tag>
-                        </div>
-                        <div className="segment-list">
-                          {parsedResult.segments.map((seg, idx) => {
-                            const tagInfo = segmentTags[seg.type] || segmentTags.other;
-                            return (
-                              <div key={idx} className="segment-item">
-                                <Tag
-                                  color={tagInfo.color}
-                                  icon={tagInfo.icon}
-                                  className="segment-tag"
-                                >
-                                  {seg.type}
-                                </Tag>
-                                <Text className="segment-content">{seg.content}</Text>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </Card>
-                    )}
-                  </div>
-
-                  {parsedResult.characters.length === 0 && parsedResult.segments.length === 0 && (
-                    <Card className="result-card" variant="borderless">
-                      <Empty
-                        description="未检测到角色或分段"
-                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      />
-                    </Card>
-                  )}
-
-                  <Card className="result-card generate-card" variant="borderless">
-                    <div className="card-header">
-                      <RobotOutlined />
-                      <Title level={5} className="card-title">
-                        AI生成
-                      </Title>
-                      <Button
-                        size="small"
-                        icon={<SettingOutlined />}
-                        onClick={() => setConfigModalVisible(true)}
-                        style={{ marginLeft: 'auto' }}
-                      >
-                        API配置
-                      </Button>
-                    </div>
-
-                    <div className="generate-settings">
-                      <Row gutter={16}>
-                        <Col span={8}>
-                          <Text strong>选择模型：</Text>
-                          <Select
-                            value={selectedModel}
-                            onChange={setSelectedModel}
-                            style={{ width: '100%', marginTop: 4 }}
-                            options={[
-                              { value: 'seedream', label: 'Seeddream 4.5' },
-                              { value: 'banana_pro', label: 'Banana Pro' },
-                            ]}
-                          />
-                        </Col>
-                        {selectedModel === 'seedream' ? (
-                          <>
-                            <Col span={8}>
-                              <Text strong>图片尺寸：</Text>
-                              <Select
-                                value={seedreamSize}
-                                onChange={setSeedreamSize}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: '1024x1024', label: '1K (1024x1024)' },
-                                  { value: '2048x2048', label: '2K (2048x2048)' },
-                                  { value: '4096x4096', label: '4K (4096x4096)' },
-                                ]}
-                              />
-                            </Col>
-                            <Col span={8}>
-                              <Text strong>组图功能：</Text>
-                              <Select
-                                value={sequentialImageGeneration}
-                                onChange={setSequentialImageGeneration}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: 'disabled', label: '关闭' },
-                                  { value: 'auto', label: '自动' },
-                                ]}
-                              />
-                            </Col>
-                            <Col span={8}>
-                              <Text strong>返回格式：</Text>
-                              <Select
-                                value={responseFormat}
-                                onChange={setResponseFormat}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: 'url', label: 'URL链接' },
-                                  { value: 'b64_json', label: 'Base64' },
-                                ]}
-                              />
-                            </Col>
-                            <Col span={8}>
-                              <Text strong>水印：</Text>
-                              <Select
-                                value={watermark}
-                                onChange={setWatermark}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: 'false', label: '无水印' },
-                                  { value: 'true', label: '有水印' },
-                                ]}
-                              />
-                            </Col>
-                          </>
-                        ) : (
-                          <>
-                            <Col span={12}>
-                              <Text strong>图片比例：</Text>
-                              <Select
-                                value={`${imageSize.width}:${imageSize.height}`}
-                                onChange={value => {
-                                  const [w, h] = value.split(':').map(Number);
-                                  setImageSize({ width: w, height: h });
-                                }}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: '1:1', label: '1:1 (方形)' },
-                                  { value: '16:9', label: '16:9 (横版)' },
-                                  { value: '9:16', label: '9:16 (竖版)' },
-                                  { value: '4:3', label: '4:3' },
-                                  { value: '3:4', label: '3:4' },
-                                ]}
-                              />
-                            </Col>
-                            <Col span={12}>
-                              <Text strong>分辨率：</Text>
-                              <Select
-                                value={bananaResolution}
-                                onChange={setBananaResolution}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: '1K', label: '1K (1024)' },
-                                  { value: '2K', label: '2K (2048)' },
-                                  { value: '4K', label: '4K (4096)' },
-                                ]}
-                              />
-                            </Col>
-                            <Col span={12}>
-                              <Text strong>生成数量：</Text>
-                              <Select
-                                value={imageCount}
-                                onChange={setImageCount}
-                                style={{ width: '100%', marginTop: 4 }}
-                                options={[
-                                  { value: 1, label: '1张' },
-                                  { value: 2, label: '2张' },
-                                  { value: 4, label: '4张' },
-                                ]}
-                              />
-                            </Col>
-                          </>
-                        )}
-                      </Row>
-
-                      <div style={{ marginTop: 12, textAlign: 'right' }}>
+                      <Space>
+                        <Tag color="blue">{batchSplitResult.total} 个场景</Tag>
                         <Button
                           size="small"
                           icon={<SettingOutlined />}
-                          onClick={handleSaveGenerationConfig}
+                          onClick={() => setBatchGenModalVisible(true)}
                         >
-                          保存为默认配置
+                          设置
                         </Button>
-                      </div>
-
-                      <Divider style={{ margin: '16px 0' }} />
-
-                      <div className="generate-actions">
                         <Button
                           type="primary"
-                          size="large"
-                          icon={<RobotOutlined />}
-                          onClick={handleGenerate}
-                          loading={generating}
-                          disabled={!parsedResult}
+                          size="small"
+                          icon={<PlayCircleOutlined />}
+                          loading={batchGenerating}
+                          onClick={handleBatchGenerate}
                         >
-                          {generating ? '生成中...' : '开始生成'}
+                          {batchGenerating
+                            ? `正在生成 (${batchProgress?.current}/${batchProgress?.total})`
+                            : '全部生图'}
                         </Button>
+                      </Space>
+                    </div>
+                    <div className="batch-segments-container">
+                      <Collapse
+                        ghost
+                        expandIconPosition="end"
+                        className="premium-collapse"
+                        items={batchSplitResult.segments.map((seg, idx) => ({
+                          key: idx,
+                          label: (
+                            <div className="segment-header-flex">
+                              <Space>
+                                <Tag color="purple">场景 {seg.index}</Tag>
+                                <Text strong className="segment-preview">
+                                  {seg.content.length > 30
+                                    ? seg.content.substring(0, 30) + '...'
+                                    : seg.content}
+                                </Text>
+                              </Space>
+                              <div className="segment-characters-preview">
+                                {seg.characters.map((char, cidx) => (
+                                  <Tag key={cidx} color="blue">
+                                    @{char.name}
+                                  </Tag>
+                                ))}
+                              </div>
+                            </div>
+                          ),
+                          children: (
+                            <div className="segment-expanded-content">
+                              <div className="info-section">
+                                <div className="info-item">
+                                  <Text type="secondary" className="info-label">
+                                    场景描述
+                                  </Text>
+                                  <div className="info-value scene-description">{seg.content}</div>
+                                </div>
+                              </div>
 
-                        {generating && (
-                          <Progress
-                            percent={generationProgress}
-                            status="active"
-                            style={{ marginLeft: 16, width: 200 }}
-                          />
-                        )}
-                      </div>
+                              <Divider style={{ margin: '16px 0' }} />
+
+                              <div className="info-section characters-section">
+                                <Title level={5} style={{ fontSize: 14, marginBottom: 12 }}>
+                                  <UserOutlined style={{ marginRight: 8 }} />
+                                  主角色与参考图绑定
+                                </Title>
+                                <div className="character-list">
+                                  {seg.characters.map((char, cidx) => {
+                                    const binding = characterBindings[char.name];
+                                    return (
+                                      <div key={cidx} className="character-item">
+                                        <div className="character-avatar">
+                                          {binding?.referenceImagePath ? (
+                                            <img
+                                              src={api.getImageUrl(binding.referenceImagePath)}
+                                              alt={char.name}
+                                              style={{
+                                                width: '100%',
+                                                height: '100%',
+                                                objectFit: 'cover',
+                                                borderRadius: '50%',
+                                              }}
+                                            />
+                                          ) : (
+                                            char.name.charAt(0).toUpperCase()
+                                          )}
+                                        </div>
+                                        <div className="character-info">
+                                          <Text strong>@{char.name}</Text>
+                                          <Tag
+                                            color={
+                                              binding?.referenceImagePath ? 'green' : 'default'
+                                            }
+                                          >
+                                            {binding?.referenceImagePath ? '已绑定' : '未绑定'}
+                                          </Tag>
+                                        </div>
+                                        <div className="character-actions">
+                                          {binding?.referenceImagePath ? (
+                                            <Button
+                                              size="small"
+                                              danger
+                                              icon={<DeleteOutlined />}
+                                              onClick={() => handleUnbind(char.name)}
+                                            >
+                                              解绑
+                                            </Button>
+                                          ) : (
+                                            <Button
+                                              size="small"
+                                              type="primary"
+                                              icon={<UploadOutlined />}
+                                              onClick={() => openBindingModal(char.name)}
+                                            >
+                                              绑定参考图
+                                            </Button>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {batchProgress?.sceneResults[idx]?.result?.success && (
+                                <>
+                                  <Divider style={{ margin: '16px 0' }} />
+                                  <div className="scene-generation-result">
+                                    <Title level={5} style={{ fontSize: 14, marginBottom: 12 }}>
+                                      <PictureOutlined style={{ marginRight: 8 }} />
+                                      生成结果
+                                    </Title>
+                                    <div className="scene-result-images">
+                                      {batchProgress.sceneResults[idx].result.images.map(
+                                        (img: string, iidx: number) => (
+                                          <div key={iidx} className="scene-img-wrapper">
+                                            <Image src={img} className="scene-img" />
+                                            <Button
+                                              type="text"
+                                              icon={<DownloadOutlined />}
+                                              size="small"
+                                              onClick={() => handleSaveImage(img)}
+                                              className="scene-img-dl"
+                                            />
+                                          </div>
+                                        )
+                                      )}
+                                    </div>
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ),
+                        }))}
+                      />
                     </div>
                   </Card>
+                )}
+              </Spin>
+            )}
 
-                  {generationResult && (
-                    <Card className="result-card" variant="borderless">
+            <Modal
+              title="批量生成设置"
+              open={batchGenModalVisible}
+              onOk={() => setBatchGenModalVisible(false)}
+              onCancel={() => setBatchGenModalVisible(false)}
+              width={600}
+              footer={[
+                <Button key="cancel" onClick={() => setBatchGenModalVisible(false)}>
+                  取消
+                </Button>,
+                <Button key="ok" type="primary" onClick={() => setBatchGenModalVisible(false)}>
+                  确定
+                </Button>,
+              ]}
+            >
+              <div style={{ padding: '8px 0' }}>
+                <Row gutter={[16, 16]}>
+                  <Col span={12}>
+                    <Text strong>模型：</Text>
+                    <Select
+                      value={selectedModel}
+                      onChange={setSelectedModel}
+                      style={{ width: '100%', marginTop: 4 }}
+                      options={[
+                        { value: 'seedream', label: 'Seedream 4.5' },
+                        { value: 'banana_pro', label: 'Banana 2' },
+                      ]}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Text strong>并发数：</Text>
+                    <InputNumber
+                      min={1}
+                      max={5}
+                      value={concurrency}
+                      onChange={value => setConcurrency(value || 2)}
+                      style={{ width: '100%', marginTop: 4 }}
+                    />
+                  </Col>
+                </Row>
+
+                {selectedModel === 'seedream' ? (
+                  <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+                    <Col span={12}>
+                      <Text strong>图片尺寸：</Text>
+                      <Select
+                        value={seedreamSize}
+                        onChange={setSeedreamSize}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: '1024x1024', label: '1K (1024x1024)' },
+                          { value: '2048x2048', label: '2K (2048x2048)' },
+                          { value: '4096x4096', label: '4K (4096x4096)' },
+                        ]}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Text strong>图片质量：</Text>
+                      <Select
+                        value={imageQuality}
+                        onChange={setImageQuality}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: 'standard', label: '标准' },
+                          { value: 'high', label: '高清' },
+                          { value: 'ultra', label: '超清' },
+                        ]}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Text strong>组图功能：</Text>
+                      <Select
+                        value={sequentialImageGeneration}
+                        onChange={setSequentialImageGeneration}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: 'disabled', label: '关闭' },
+                          { value: 'auto', label: '自动' },
+                        ]}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Text strong>返回格式：</Text>
+                      <Select
+                        value={responseFormat}
+                        onChange={setResponseFormat}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: 'url', label: 'URL链接' },
+                          { value: 'b64_json', label: 'Base64' },
+                        ]}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Text strong>水印：</Text>
+                      <Select
+                        value={watermark}
+                        onChange={setWatermark}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: 'false', label: '无水印' },
+                          { value: 'true', label: '有水印' },
+                        ]}
+                      />
+                    </Col>
+                  </Row>
+                ) : (
+                  <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+                    <Col span={12}>
+                      <Text strong>图片比例：</Text>
+                      <Select
+                        value={`${imageSize.width}:${imageSize.height}`}
+                        onChange={value => {
+                          const [w, h] = value.split(':').map(Number);
+                          setImageSize({ width: w, height: h });
+                        }}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: '1:1', label: '1:1 (方形)' },
+                          { value: '16:9', label: '16:9 (横版)' },
+                          { value: '9:16', label: '9:16 (竖版)' },
+                          { value: '4:3', label: '4:3' },
+                          { value: '3:4', label: '3:4' },
+                        ]}
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <Text strong>分辨率：</Text>
+                      <Select
+                        value={bananaResolution}
+                        onChange={setBananaResolution}
+                        style={{ width: '100%', marginTop: 4 }}
+                        options={[
+                          { value: '1K', label: '1K (1024)' },
+                          { value: '2K', label: '2K (2048)' },
+                          { value: '4K', label: '4K (4096)' },
+                        ]}
+                      />
+                    </Col>
+                  </Row>
+                )}
+              </div>
+            </Modal>
+
+            {!batchMode && (
+              <Spin spinning={loading}>
+                {parsedResult ? (
+                  <div className="results-container">
+                    <Card className="result-card original-card" variant="borderless">
                       <div className="card-header">
                         <Title level={5} className="card-title">
-                          生成结果
+                          原始提示词
                         </Title>
-                        {generationResult.success && <Tag color="green">成功</Tag>}
-                        {!generationResult.success && <Tag color="red">失败</Tag>}
+                      </div>
+                      <Paragraph className="original-text" copyable>
+                        {parsedResult.original}
+                      </Paragraph>
+                    </Card>
+
+                    <div className="results-grid">
+                      {parsedResult.characters.length > 0 && (
+                        <Card className="result-card" variant="borderless">
+                          <div className="card-header">
+                            <UserOutlined />
+                            <Title level={5} className="card-title">
+                              角色
+                            </Title>
+                            <Tag color="blue">{parsedResult.characters.length}</Tag>
+                          </div>
+                          <div className="character-list">
+                            {parsedResult.characters.map((char, idx) => {
+                              const binding = characterBindings[char.name];
+                              return (
+                                <div key={idx} className="character-item">
+                                  <div className="character-avatar">
+                                    {binding?.referenceImagePath &&
+                                    binding.referenceImagePath.trim() !== '' ? (
+                                      <img
+                                        src={api.getImageUrl(binding.referenceImagePath || '')}
+                                        alt={char.name}
+                                        style={{
+                                          width: '100%',
+                                          height: '100%',
+                                          objectFit: 'cover',
+                                          borderRadius: '50%',
+                                        }}
+                                      />
+                                    ) : (
+                                      char.name.charAt(0).toUpperCase()
+                                    )}
+                                  </div>
+                                  <div className="character-info">
+                                    <Text strong>@{char.name}</Text>
+                                    <Tag
+                                      color={char.bound ? 'green' : 'default'}
+                                      className="bind-tag"
+                                      icon={char.bound ? <CheckCircleFilled /> : null}
+                                    >
+                                      {char.bound ? '已绑定' : '未绑定'}
+                                    </Tag>
+                                  </div>
+                                  <div className="character-actions">
+                                    {char.bound ? (
+                                      <Button
+                                        size="small"
+                                        danger
+                                        icon={<DeleteOutlined />}
+                                        onClick={() => handleUnbind(char.name)}
+                                      >
+                                        解绑
+                                      </Button>
+                                    ) : (
+                                      <Button
+                                        size="small"
+                                        type="primary"
+                                        icon={<UploadOutlined />}
+                                        onClick={() => openBindingModal(char.name)}
+                                      >
+                                        绑定参考图
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </Card>
+                      )}
+
+                      {parsedResult.segments.length > 0 && (
+                        <Card className="result-card" variant="borderless">
+                          <div className="card-header">
+                            <AppstoreOutlined />
+                            <Title level={5} className="card-title">
+                              内容分段
+                            </Title>
+                            <Tag color="purple">{parsedResult.segments.length}</Tag>
+                          </div>
+                          <div className="segment-list">
+                            {parsedResult.segments.map((seg, idx) => {
+                              const tagInfo = segmentTags[seg.type] || segmentTags.other;
+                              return (
+                                <div key={idx} className="segment-item">
+                                  <Tag
+                                    color={tagInfo.color}
+                                    icon={tagInfo.icon}
+                                    className="segment-tag"
+                                  >
+                                    {seg.type}
+                                  </Tag>
+                                  <Text className="segment-content">{seg.content}</Text>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </Card>
+                      )}
+                    </div>
+
+                    {parsedResult.characters.length === 0 && parsedResult.segments.length === 0 && (
+                      <Card className="result-card" variant="borderless">
+                        <Empty
+                          description="未检测到角色或分段"
+                          image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        />
+                      </Card>
+                    )}
+
+                    <Card className="result-card generate-card" variant="borderless">
+                      <div className="card-header">
+                        <RobotOutlined />
+                        <Title level={5} className="card-title">
+                          AI生成
+                        </Title>
+                        <Button
+                          size="small"
+                          icon={<SettingOutlined />}
+                          onClick={() => setConfigModalVisible(true)}
+                          style={{ marginLeft: 'auto' }}
+                        >
+                          API配置
+                        </Button>
                       </div>
 
-                      {generationResult.success ? (
+                      <div className="generate-settings">
                         <Row gutter={16}>
-                          {generationResult.images.map((img, idx) => (
-                            <Col key={idx} span={12}>
-                              <Image
-                                src={img}
-                                alt={`生成图片 ${idx + 1}`}
-                                style={{ width: '100%', borderRadius: 8 }}
-                              />
-                              <Button
-                                type="link"
-                                icon={<DownloadOutlined />}
-                                onClick={() => handleSaveImage(img)}
-                                style={{ marginTop: 8 }}
-                              >
-                                保存到本地
-                              </Button>
-                            </Col>
-                          ))}
+                          <Col span={8}>
+                            <Text strong>选择模型：</Text>
+                            <Select
+                              value={selectedModel}
+                              onChange={setSelectedModel}
+                              style={{ width: '100%', marginTop: 4 }}
+                              options={[
+                                { value: 'seedream', label: 'Seeddream 4.5' },
+                                { value: 'banana_pro', label: 'Banana 2' },
+                              ]}
+                            />
+                          </Col>
+                          {selectedModel === 'seedream' ? (
+                            <>
+                              <Col span={8}>
+                                <Text strong>图片尺寸：</Text>
+                                <Select
+                                  value={seedreamSize}
+                                  onChange={setSeedreamSize}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: '1024x1024', label: '1K (1024x1024)' },
+                                    { value: '2048x2048', label: '2K (2048x2048)' },
+                                    { value: '4096x4096', label: '4K (4096x4096)' },
+                                  ]}
+                                />
+                              </Col>
+                              <Col span={8}>
+                                <Text strong>组图功能：</Text>
+                                <Select
+                                  value={sequentialImageGeneration}
+                                  onChange={setSequentialImageGeneration}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: 'disabled', label: '关闭' },
+                                    { value: 'auto', label: '自动' },
+                                  ]}
+                                />
+                              </Col>
+                              <Col span={8}>
+                                <Text strong>返回格式：</Text>
+                                <Select
+                                  value={responseFormat}
+                                  onChange={setResponseFormat}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: 'url', label: 'URL链接' },
+                                    { value: 'b64_json', label: 'Base64' },
+                                  ]}
+                                />
+                              </Col>
+                              <Col span={8}>
+                                <Text strong>水印：</Text>
+                                <Select
+                                  value={watermark}
+                                  onChange={setWatermark}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: 'false', label: '无水印' },
+                                    { value: 'true', label: '有水印' },
+                                  ]}
+                                />
+                              </Col>
+                            </>
+                          ) : (
+                            <>
+                              <Col span={12}>
+                                <Text strong>图片比例：</Text>
+                                <Select
+                                  value={`${imageSize.width}:${imageSize.height}`}
+                                  onChange={value => {
+                                    const [w, h] = value.split(':').map(Number);
+                                    setImageSize({ width: w, height: h });
+                                  }}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: '1:1', label: '1:1 (方形)' },
+                                    { value: '16:9', label: '16:9 (横版)' },
+                                    { value: '9:16', label: '9:16 (竖版)' },
+                                    { value: '4:3', label: '4:3' },
+                                    { value: '3:4', label: '3:4' },
+                                  ]}
+                                />
+                              </Col>
+                              <Col span={12}>
+                                <Text strong>分辨率：</Text>
+                                <Select
+                                  value={bananaResolution}
+                                  onChange={setBananaResolution}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: '1K', label: '1K (1024)' },
+                                    { value: '2K', label: '2K (2048)' },
+                                    { value: '4K', label: '4K (4096)' },
+                                  ]}
+                                />
+                              </Col>
+                              <Col span={12}>
+                                <Text strong>生成数量：</Text>
+                                <Select
+                                  value={imageCount}
+                                  onChange={setImageCount}
+                                  style={{ width: '100%', marginTop: 4 }}
+                                  options={[
+                                    { value: 1, label: '1张' },
+                                    { value: 2, label: '2张' },
+                                    { value: 4, label: '4张' },
+                                  ]}
+                                />
+                              </Col>
+                            </>
+                          )}
                         </Row>
-                      ) : (
-                        <Alert
-                          message="生成失败"
-                          description={generationResult.error}
-                          type="error"
-                          showIcon
-                        />
-                      )}
+
+                        <div style={{ marginTop: 12, textAlign: 'right' }}>
+                          <Button
+                            size="small"
+                            icon={<SettingOutlined />}
+                            onClick={handleSaveGenerationConfig}
+                          >
+                            保存为默认配置
+                          </Button>
+                        </div>
+
+                        <Divider style={{ margin: '16px 0' }} />
+
+                        <div className="generate-actions">
+                          <Button
+                            type="primary"
+                            size="large"
+                            icon={<RobotOutlined />}
+                            onClick={handleGenerate}
+                            loading={generating}
+                            disabled={!parsedResult}
+                          >
+                            {generating ? '生成中...' : '开始生成'}
+                          </Button>
+
+                          {generating && (
+                            <Progress
+                              percent={generationProgress}
+                              status="active"
+                              style={{ marginLeft: 16, width: 200 }}
+                            />
+                          )}
+                        </div>
+                      </div>
                     </Card>
-                  )}
-                </div>
-              ) : (
-                !loading && (
-                  <Card className="result-card empty-card" variant="borderless">
-                    <Empty
-                      description="输入提示词并点击解析开始"
-                      image={Empty.PRESENTED_IMAGE_SIMPLE}
-                    />
-                  </Card>
-                )
-              )}
-            </Spin>
+
+                    {generationResult && (
+                      <Card className="result-card" variant="borderless">
+                        <div className="card-header">
+                          <Title level={5} className="card-title">
+                            生成结果
+                          </Title>
+                          {generationResult.success && <Tag color="green">成功</Tag>}
+                          {!generationResult.success && <Tag color="red">失败</Tag>}
+                        </div>
+
+                        {generationResult.success ? (
+                          <Row gutter={16}>
+                            {generationResult.images.map((img, idx) => (
+                              <Col key={idx} span={12}>
+                                <Image
+                                  src={img}
+                                  alt={`生成图片 ${idx + 1}`}
+                                  style={{ width: '100%', borderRadius: 8 }}
+                                />
+                                <Button
+                                  type="link"
+                                  icon={<DownloadOutlined />}
+                                  onClick={() => handleSaveImage(img)}
+                                  style={{ marginTop: 8 }}
+                                >
+                                  保存到本地
+                                </Button>
+                              </Col>
+                            ))}
+                          </Row>
+                        ) : (
+                          <Alert
+                            message="生成失败"
+                            description={generationResult.error}
+                            type="error"
+                            showIcon
+                          />
+                        )}
+                      </Card>
+                    )}
+                  </div>
+                ) : (
+                  !loading && (
+                    <Card className="result-card empty-card" variant="borderless">
+                      <Empty
+                        description="输入提示词并点击解析开始"
+                        image={Empty.PRESENTED_IMAGE_SIMPLE}
+                      />
+                    </Card>
+                  )
+                )}
+              </Spin>
+            )}
           </div>
         </Content>
       </Layout>
@@ -1244,7 +1786,7 @@ function MainApp() {
             </Button>
           </div>
 
-          <Divider>Banana Pro API</Divider>
+          <Divider>Banana 2 API</Divider>
           <div style={{ marginBottom: 16 }}>
             <Text strong>Base URL:</Text>
             <Input
@@ -1367,14 +1909,31 @@ function MainApp() {
                 title: '第六步：生成图片',
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>选择模型（Seedream 或 Banana Pro）和图片尺寸</p>
+                    <p>选择模型（Seedream 或 Banana 2）和图片参数</p>
                     <p>点击「开始生成」等待图片生成完成</p>
                     <p>生成完成后可以点击「保存到本地」</p>
                   </div>
                 ),
               },
               {
-                title: '第七步：隐藏窗口',
+                title: '第七步：批量处理（可选）',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>开启「批量模式」可一次性生成多张图片：</p>
+                    <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                      <li>开启批量模式开关</li>
+                      <li>配置分隔符或开启自动识别</li>
+                      <li>输入多个场景的提示词（用 | 分隔）</li>
+                      <li>点击「拆分场景」拆分提示词</li>
+                      <li>为每个场景绑定角色参考图（可选）</li>
+                      <li>点击「设置」调整模型和并发数</li>
+                      <li>点击「全部生图」并发生成图片</li>
+                    </ul>
+                  </div>
+                ),
+              },
+              {
+                title: '第八步：隐藏窗口',
                 description: (
                   <div style={{ color: '#666' }}>
                     <p>

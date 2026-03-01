@@ -83,6 +83,7 @@ pub struct GenerationConfig {
     #[serde(alias = "responseFormat")]
     pub response_format: Option<String>,
     pub watermark: Option<bool>,
+    pub concurrency: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +257,7 @@ pub fn get_default_generation_config() -> GenerationConfig {
         sequential_image_generation: Some("disabled".to_string()),
         response_format: Some("url".to_string()),
         watermark: Some(false),
+        concurrency: Some(2),
     }
 }
 

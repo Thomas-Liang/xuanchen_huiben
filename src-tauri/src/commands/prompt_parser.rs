@@ -584,6 +584,144 @@ pub fn test_parse(prompt: &str) -> Result<ParsedPrompt, String> {
     parse_prompt_internal(prompt)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptSegmentItem {
+    pub index: usize,
+    pub content: String,
+    pub characters: Vec<CharacterRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSplitResult {
+    pub total: usize,
+    pub segments: Vec<PromptSegmentItem>,
+}
+
+fn parse_scene_pattern(prompt: &str) -> Vec<String> {
+    let mut scenes = Vec::new();
+
+    // Support numeric patterns like "场景1:", "Scene 1:", "1:"
+    // Note: Rust standard regex doesn't support lookaround, so we match the delimiter 
+    // and then extract content between matches.
+    let scene_delimiter_regex = Regex::new(r"(?:场景?|Scene|Challenge|Ch)?\s*[\d一二三四五六七八九十百千万]+[：:]").unwrap();
+
+    let matches: Vec<_> = scene_delimiter_regex.find_iter(prompt).collect();
+    
+    if matches.is_empty() {
+        return Vec::new();
+    }
+
+    for i in 0..matches.len() {
+        let start = matches[i].end();
+        let end = if i + 1 < matches.len() {
+            matches[i+1].start()
+        } else {
+            prompt.len()
+        };
+        
+        let content = prompt[start..end].trim();
+        if !content.is_empty() {
+            scenes.push(content.to_string());
+        }
+    }
+
+    scenes
+}
+
+fn parse_custom_delimiter(prompt: &str, delimiter: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+
+    let delimiters = if delimiter.is_empty() || delimiter == "\\n" {
+        vec!["\n", "\r\n", "\r"]
+    } else if delimiter == "\\t" {
+        vec!["\t"]
+    } else {
+        vec![delimiter]
+    };
+
+    for delim in delimiters {
+        if prompt.contains(delim) {
+            parts = prompt
+                .split(delim)
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect();
+            break;
+        }
+    }
+
+    parts
+}
+
+#[tauri::command]
+pub fn batch_split_prompt(
+    prompt: &str,
+    delimiter: &str,
+    auto_detect: bool,
+) -> Result<BatchSplitResult, String> {
+    if prompt.is_empty() {
+        return Err("提示词不能为空".to_string());
+    }
+
+    let mut segments: Vec<PromptSegmentItem> = Vec::new();
+
+    let parts = if auto_detect {
+        let scene_pattern = parse_scene_pattern(prompt);
+        if !scene_pattern.is_empty() {
+            scene_pattern
+        } else {
+            // Smart auto-detection: try common delimiters if numeric pattern fails
+            let mut detected_parts = Vec::new();
+            // Order matters: use more specific/common delimiters first
+            for d in &["|", "\n", "；", ";"] {
+                if prompt.contains(d) {
+                    detected_parts = parse_custom_delimiter(prompt, d);
+                    if detected_parts.len() > 1 {
+                        break;
+                    }
+                }
+            }
+            
+            if detected_parts.len() > 1 {
+                detected_parts
+            } else if !delimiter.is_empty() {
+                let custom = parse_custom_delimiter(prompt, delimiter);
+                if !custom.is_empty() { custom } else { vec![prompt.to_string()] }
+            } else {
+                vec![prompt.to_string()]
+            }
+        }
+    } else if !delimiter.is_empty() {
+        let custom_parts = parse_custom_delimiter(prompt, delimiter);
+        if !custom_parts.is_empty() {
+            custom_parts
+        } else {
+            vec![prompt.to_string()]
+        }
+    } else {
+        vec![prompt.to_string()]
+    };
+
+    for (idx, part) in parts.iter().enumerate() {
+        let characters = extract_character_references(part);
+        segments.push(PromptSegmentItem {
+            index: idx + 1,
+            content: part.clone(),
+            characters,
+        });
+    }
+
+    if segments.is_empty() {
+        return Err("未能拆分出有效内容".to_string());
+    }
+
+    Ok(BatchSplitResult {
+        total: segments.len(),
+        segments,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -635,5 +773,25 @@ mod tests {
         println!("测试4 - 时间/天气/风格: {:?}", types);
 
         assert!(types.iter().any(|&t| t == "time" || t == "scene"));
+    }
+
+    #[test]
+    fn test_batch_split_smart_auto_detect() {
+        let prompt = "在森林里@小明 跑步 | 海边@女孩 散步 | 山上@英雄";
+        // Auto-detect should find the '|' delimiter
+        let result = batch_split_prompt(prompt, "", true).unwrap();
+        assert_eq!(result.total, 3);
+        assert_eq!(result.segments[0].content, "在森林里@小明 跑步");
+        assert_eq!(result.segments[0].characters[0].name, "小明");
+        assert_eq!(result.segments[1].content, "海边@女孩 散步");
+        assert_eq!(result.segments[2].content, "山上@英雄");
+    }
+
+    #[test]
+    fn test_batch_split_numeric_pattern() {
+        let prompt = "场景1: @小明 在森林 场景2: @女孩 在海边";
+        let result = batch_split_prompt(prompt, "", true).unwrap();
+        assert_eq!(result.total, 2);
+        assert_eq!(result.segments[0].content, "@小明 在森林");
     }
 }

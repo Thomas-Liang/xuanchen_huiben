@@ -88,4 +88,47 @@ export interface GenerationConfig {
   sequential_image_generation?: 'auto' | 'disabled';
   response_format?: 'url' | 'b64_json';
   watermark?: boolean;
+  concurrency?: number;
+}
+
+export interface PromptSegmentItem {
+  index: number;
+  content: string;
+  characters: CharacterRef[];
+}
+
+export interface BatchSplitResult {
+  total: number;
+  segments: PromptSegmentItem[];
+}
+
+export interface BatchBindingMode {
+  mode: 'individual' | 'global';
+}
+
+export interface SceneBinding {
+  sceneIndex: number;
+  sceneContent: string;
+  characters: {
+    name: string;
+    binding?: CharacterBinding;
+  }[];
+}
+
+export interface BatchGenerateConfig {
+  delimiter: string;
+  autoDetect: boolean;
+  bindingMode: 'individual' | 'global';
+  generateMode: 'sequential' | 'parallel';
+  failStrategy: 'continue' | 'stop';
+}
+
+export interface BatchGenerateProgress {
+  total: number;
+  current: number;
+  sceneResults: {
+    index: number;
+    status: 'pending' | 'generating' | 'completed' | 'failed';
+    result?: ImageGenerationResult;
+  }[];
 }

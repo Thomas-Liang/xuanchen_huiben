@@ -6,12 +6,13 @@ import type {
   ImageGenerationResult,
   APIConfig,
   GenerationConfig,
+  BatchSplitResult,
 } from './types';
 
 const API_BASE = '';
 
 function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI__' in window;
+  return typeof window !== 'undefined' && '__TAURI__' in (window as any);
 }
 
 async function fetchApi<T>(endpoint: string, body?: unknown): Promise<T> {
@@ -20,16 +21,16 @@ async function fetchApi<T>(endpoint: string, body?: unknown): Promise<T> {
   try {
     const response = isGet
       ? await axios.get(url, {
-        headers: {
-          Accept: 'application/json',
-        },
-      })
-      : await axios.post(url, body, {
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-      });
+          headers: {
+            Accept: 'application/json',
+          },
+        })
+      : await axios.post(url, JSON.stringify(body), {
+          headers: {
+            'Content-Type': 'application/json;charset=UTF-8',
+            Accept: 'application/json',
+          },
+        });
     return response.data;
   } catch (error) {
     const axiosError = error as AxiosError;
@@ -50,6 +51,18 @@ export async function parsePrompt(prompt: string): Promise<ParsedPrompt> {
     return invoke<ParsedPrompt>('parse_prompt', { prompt });
   }
   return fetchApi<ParsedPrompt>('/api/parse', { prompt });
+}
+
+export async function batchSplitPrompt(
+  prompt: string,
+  delimiter: string,
+  autoDetect: boolean
+): Promise<BatchSplitResult> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke<BatchSplitResult>('batch_split_prompt', { prompt, delimiter, autoDetect });
+  }
+  return fetchApi<BatchSplitResult>('/api/batch-split', { prompt, delimiter, autoDetect });
 }
 
 export async function getBindingsForPrompt(characters: string[]): Promise<CharacterBinding[]> {
@@ -298,7 +311,7 @@ export async function saveImageDialog(imageUrl: string): Promise<string | null> 
         if (lastPart && lastPart.includes('.')) {
           fileName = lastPart;
         }
-      } catch (e) { }
+      } catch (e) {}
     }
 
     link.setAttribute('download', fileName);

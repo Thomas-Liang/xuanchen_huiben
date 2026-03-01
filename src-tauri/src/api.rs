@@ -1,6 +1,7 @@
 use axum::{
     routing::{get, post},
     Router,
+    extract::Json,
 };
 use tower_http::cors::{Any, CorsLayer};
 use serde::Deserialize;
@@ -11,9 +12,8 @@ use crate::commands::character_binding::{
 };
 use crate::commands::prompt_parser::parse_prompt_internal;
 use crate::commands::prompt_parser::ParsedPrompt;
-use crate::commands::image_generator::{
-    ApiConfig, CharacterBindingInfo, GenerationConfig, ImageGenerationParams, ImageGenerationResult,
-};
+use crate::commands::prompt_parser::{batch_split_prompt, BatchSplitResult};
+use crate::commands::image_generator::GenerationConfig;
 
 #[derive(Debug, Deserialize)]
 pub struct ImageQuery {
@@ -172,6 +172,34 @@ async fn api_parse_prompt(axum::Json(body): axum::Json<ParseBody>) -> Result<axu
             eprintln!("api_parse_prompt error: {}", e);
             (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e)
         })
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BatchSplitBody {
+    prompt: String,
+    delimiter: String,
+    auto_detect: bool,
+}
+
+async fn api_batch_split_prompt(
+    Json(body): Json<BatchSplitBody>
+) -> Result<Json<BatchSplitResult>, (axum::http::StatusCode, Json<serde_json::Value>)> {
+    eprintln!("api_batch_split_prompt: Processing prompt with delimiter: '{}', auto_detect: {}", body.delimiter, body.auto_detect);
+
+    match batch_split_prompt(&body.prompt, &body.delimiter, body.auto_detect) {
+        Ok(result) => {
+            eprintln!("api_batch_split_prompt: Success, split into {} segments", result.total);
+            Ok(Json(result))
+        },
+        Err(e) => {
+            eprintln!("api_batch_split_prompt backend logic error: {}", e);
+            Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": e }))
+            ))
+        }
+    }
 }
 
 async fn api_get_all_bindings() -> Result<axum::Json<Vec<CharacterBinding>>, String> {
@@ -367,7 +395,7 @@ async fn api_get_default_config(
 }
 
 async fn api_load_config(
-) -> Result<axum::Json<serde_json::Value>, String> {
+) -> Result<axum::Json<serde_json::Value>, (axum::http::StatusCode, axum::Json<serde_json::Value>)> {
     use crate::commands::image_generator::load_api_config;
     
     match load_api_config() {
@@ -386,7 +414,10 @@ async fn api_load_config(
         }
         Err(e) => {
             eprintln!("Failed to load config: {}", e);
-            Err(e)
+            Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({ "error": e }))
+            ))
         }
     }
 }
@@ -402,6 +433,7 @@ pub struct GenerationConfigBody {
     sequential_image_generation: Option<String>,
     response_format: Option<String>,
     watermark: Option<bool>,
+    concurrency: Option<u32>,
 }
 
 async fn api_save_generation_config(
@@ -418,6 +450,7 @@ async fn api_save_generation_config(
         sequential_image_generation: body.sequential_image_generation,
         response_format: body.response_format,
         watermark: body.watermark,
+        concurrency: body.concurrency,
     };
     let result = save_generation_config(config);
     match result {
@@ -429,7 +462,7 @@ async fn api_save_generation_config(
     }
 }
 
-async fn api_load_generation_config() -> Result<axum::Json<crate::commands::image_generator::GenerationConfig>, String> {
+async fn api_load_generation_config() -> Result<axum::Json<crate::commands::image_generator::GenerationConfig>, (axum::http::StatusCode, axum::Json<serde_json::Value>)> {
     use crate::commands::image_generator::{load_generation_config, GenerationConfig};
     let result = load_generation_config().unwrap_or(GenerationConfig {
         model: "seedream".to_string(),
@@ -480,6 +513,7 @@ pub fn create_api_router() -> Router {
     
     Router::new()
         .route("/api/parse", post(api_parse_prompt))
+        .route("/api/batch-split", post(api_batch_split_prompt))
         .route("/api/bindings", get(api_get_all_bindings))
         .route("/api/bindings/for-prompt", post(api_get_bindings_for_prompt))
         .route("/api/save-image", post(api_save_reference_image))

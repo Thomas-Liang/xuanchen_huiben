@@ -13,7 +13,7 @@ use commands::image_generator::{
     get_generation_progress, load_api_config, load_generation_config,
     save_api_config, save_generation_config, test_api_connection,
 };
-use commands::prompt_parser::{parse_prompt, test_parse};
+use commands::prompt_parser::{batch_split_prompt, parse_prompt, test_parse};
 use std::net::SocketAddr;
 use tauri::{
     image::Image,
@@ -156,6 +156,7 @@ pub async fn main() {
             greet,
             parse_prompt,
             test_parse,
+            batch_split_prompt,
             save_reference_image,
             bind_character_reference,
             unbind_character,
