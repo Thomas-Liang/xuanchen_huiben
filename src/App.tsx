@@ -42,6 +42,7 @@ import {
   PictureOutlined,
   SearchOutlined,
   PlusOutlined,
+  EyeOutlined,
 } from '@ant-design/icons';
 import type {
   ParsedPrompt,
@@ -1057,14 +1058,39 @@ function MainApp() {
                                     <div className="scene-result-images">
                                       {batchProgress.sceneResults[idx].result.images.map(
                                         (img: string, iidx: number) => (
-                                          <div key={iidx} className="scene-img-wrapper">
-                                            <Image src={img} className="scene-img" />
+                                          <div
+                                            key={iidx}
+                                            className="scene-img-wrapper"
+                                            style={{
+                                              position: 'relative',
+                                              display: 'inline-block',
+                                              margin: '4px',
+                                            }}
+                                          >
+                                            <Image
+                                              src={img}
+                                              className="scene-img"
+                                              style={{ width: 200, borderRadius: 8 }}
+                                              preview={{
+                                                mask: (
+                                                  <div style={{ fontSize: 14 }}>
+                                                    <EyeOutlined style={{ marginRight: 4 }} />
+                                                    点击放大
+                                                  </div>
+                                                ),
+                                              }}
+                                            />
                                             <Button
-                                              type="text"
+                                              type="primary"
                                               icon={<DownloadOutlined />}
                                               size="small"
                                               onClick={() => handleSaveImage(img)}
-                                              className="scene-img-dl"
+                                              style={{
+                                                position: 'absolute',
+                                                top: 8,
+                                                right: 8,
+                                                zIndex: 10,
+                                              }}
                                             />
                                           </div>
                                         )
@@ -1600,6 +1626,8 @@ function MainApp() {
                         style={{ marginLeft: 16 }}
                       >
                         <Radio value="人物">人物</Radio>
+                        <Radio value="人脸">人脸</Radio>
+                        <Radio value="全身">全身</Radio>
                         <Radio value="场景">场景</Radio>
                       </Radio.Group>
                     </div>
