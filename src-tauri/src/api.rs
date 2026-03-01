@@ -474,6 +474,7 @@ async fn api_load_generation_config() -> Result<axum::Json<crate::commands::imag
         sequential_image_generation: Some("disabled".to_string()),
         response_format: Some("url".to_string()),
         watermark: Some(false),
+        concurrency: Some(2),
     });
     Ok(axum::Json(result))
 }
