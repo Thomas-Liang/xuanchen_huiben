@@ -877,7 +877,11 @@ function MainApp() {
                         单行：
                       </Text>
                       {batchExamplePrompts.singleLine.map((example, idx) => (
-                        <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
+                        <Tag
+                          key={`single-${idx}`}
+                          className="example-tag"
+                          onClick={() => setPrompt(example)}
+                        >
                           {example.slice(0, 20)}...
                         </Tag>
                       ))}
@@ -885,14 +889,22 @@ function MainApp() {
                         多行：
                       </Text>
                       {batchExamplePrompts.multiLine.map((example, idx) => (
-                        <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
+                        <Tag
+                          key={`multi-${idx}`}
+                          className="example-tag"
+                          onClick={() => setPrompt(example)}
+                        >
                           {example.slice(0, 20)}...
                         </Tag>
                       ))}
                     </>
                   ) : (
                     examplePrompts.map((example, idx) => (
-                      <Tag key={idx} className="example-tag" onClick={() => setPrompt(example)}>
+                      <Tag
+                        key={`single-prompt-${idx}`}
+                        className="example-tag"
+                        onClick={() => setPrompt(example)}
+                      >
                         {example.slice(0, 20)}...
                       </Tag>
                     ))
@@ -1241,10 +1253,10 @@ function MainApp() {
                             <Tag color="blue">{parsedResult.characters.length}</Tag>
                           </div>
                           <div className="character-list">
-                            {parsedResult.characters.map((char, idx) => {
+                            {parsedResult.characters.map(char => {
                               const binding = characterBindings[char.name];
                               return (
-                                <div key={idx} className="character-item">
+                                <div key={char.name} className="character-item">
                                   <div className="character-avatar">
                                     {binding?.referenceImagePath &&
                                     binding.referenceImagePath.trim() !== '' ? (
@@ -1313,7 +1325,7 @@ function MainApp() {
                             {parsedResult.segments.map((seg, idx) => {
                               const tagInfo = segmentTags[seg.type] || segmentTags.other;
                               return (
-                                <div key={idx} className="segment-item">
+                                <div key={`segment-${idx}`} className="segment-item">
                                   <Tag
                                     color={tagInfo.color}
                                     icon={tagInfo.icon}
@@ -1519,7 +1531,7 @@ function MainApp() {
                         {generationResult.success ? (
                           <Row gutter={16}>
                             {generationResult.images.map((img, idx) => (
-                              <Col key={idx} span={12}>
+                              <Col key={`gen-img-${idx}`} span={12}>
                                 <Image
                                   src={img}
                                   alt={`生成图片 ${idx + 1}`}
