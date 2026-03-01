@@ -1610,16 +1610,7 @@ function MainApp() {
                       </Card>
                     )}
                   </div>
-                ) : (
-                  !loading && (
-                    <Card className="result-card empty-card" variant="borderless">
-                      <Empty
-                        description="输入提示词并点击解析开始"
-                        image={Empty.PRESENTED_IMAGE_SIMPLE}
-                      />
-                    </Card>
-                  )
-                )}
+                ) : null}
               </Spin>
             )}
           </div>
