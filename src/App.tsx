@@ -35,7 +35,6 @@ import {
   RobotOutlined,
   UploadOutlined,
   DeleteOutlined,
-  CheckCircleFilled,
   SettingOutlined,
   DownloadOutlined,
   QuestionCircleOutlined,
@@ -59,7 +58,7 @@ import './App.css';
 
 const { Header, Content } = Layout;
 const { TextArea } = Input;
-const { Title, Text, Paragraph } = Typography;
+const { Title, Text } = Typography;
 
 const themeConfig = {
   token: {
@@ -266,14 +265,23 @@ function MainApp() {
   };
 
   const handleBatchGenerate = async () => {
-    if (!batchSplitResult) return;
+    let segments = batchMode ? batchSplitResult?.segments : parsedResult?.segments;
+    if (!segments || segments.length === 0) return;
+
+    if (!batchMode && parsedResult) {
+      segments = parsedResult.segments.map((seg, idx) => ({
+        index: idx,
+        content: seg.content,
+        characters: parsedResult.characters,
+      }));
+    }
 
     setBatchGenerating(true);
-    const total = batchSplitResult.segments.length;
+    const total = segments.length;
     const initialProgress: any = {
       total,
       current: 0,
-      sceneResults: batchSplitResult.segments.map(seg => ({
+      sceneResults: (segments as any).map((seg: any) => ({
         index: seg.index,
         status: 'pending',
       })),
@@ -299,7 +307,7 @@ function MainApp() {
     }
 
     const concurrencyLimit = concurrency;
-    const tasks = [...batchSplitResult.segments];
+    const tasks = [...segments];
 
     const runTask = async (seg: any, idx: number) => {
       setBatchProgress((prev: any) => {
@@ -794,7 +802,14 @@ function MainApp() {
                   </span>
                   <Switch
                     checked={batchMode}
-                    onChange={setBatchMode}
+                    onChange={checked => {
+                      setBatchMode(checked);
+                      if (!checked) {
+                        setParsedResult(null);
+                      } else {
+                        setBatchSplitResult(null);
+                      }
+                    }}
                     checkedChildren="批量"
                     unCheckedChildren="单图"
                   />
@@ -1285,113 +1300,132 @@ function MainApp() {
                     <Card className="result-card original-card" variant="borderless">
                       <div className="card-header">
                         <Title level={5} className="card-title">
-                          原始提示词
+                          解析结果
                         </Title>
+                        <Space style={{ marginLeft: 'auto' }}>
+                          <Button
+                            size="small"
+                            icon={<SettingOutlined />}
+                            onClick={() => setBatchGenModalVisible(true)}
+                          >
+                            生成设置
+                          </Button>
+                          <Button
+                            type="primary"
+                            size="small"
+                            icon={<PlayCircleOutlined />}
+                            onClick={handleBatchGenerate}
+                            disabled={!parsedResult}
+                            style={{
+                              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+                              border: 'none',
+                            }}
+                          >
+                            全部生图
+                          </Button>
+                        </Space>
                       </div>
-                      <Paragraph className="original-text" copyable>
-                        {parsedResult.original}
-                      </Paragraph>
+                      <Collapse
+                        ghost
+                        expandIconPosition="end"
+                        className="premium-collapse"
+                        items={[
+                          {
+                            key: '1',
+                            label: (
+                              <Space>
+                                <Tag color="blue">原始提示词</Tag>
+                                <Tag color="green">{parsedResult.characters.length} 个角色</Tag>
+                                <Tag color="purple">{parsedResult.segments.length} 个分段</Tag>
+                              </Space>
+                            ),
+                            children: (
+                              <div>
+                                <div style={{ marginBottom: 16 }}>
+                                  <strong>原始提示词：</strong>
+                                  {parsedResult.original}
+                                </div>
+
+                                {parsedResult.characters.length > 0 && (
+                                  <div className="character-list" style={{ marginBottom: 16 }}>
+                                    <strong>角色：</strong>
+                                    <div style={{ marginTop: 8 }}>
+                                      {parsedResult.characters.map(char => {
+                                        const binding = characterBindings[char.name];
+                                        return (
+                                          <div key={char.name} className="character-item">
+                                            <div className="character-avatar">
+                                              {binding?.referenceImagePath ? (
+                                                <img
+                                                  src={api.getImageUrl(binding.referenceImagePath)}
+                                                  alt={char.name}
+                                                  style={{
+                                                    width: '100%',
+                                                    height: '100%',
+                                                    objectFit: 'cover',
+                                                    borderRadius: '50%',
+                                                  }}
+                                                />
+                                              ) : (
+                                                char.name.charAt(0).toUpperCase()
+                                              )}
+                                            </div>
+                                            <div className="character-info">
+                                              <Text strong>@{char.name}</Text>
+                                              <Tag color={char.bound ? 'green' : 'default'}>
+                                                {char.bound ? '已绑定' : '未绑定'}
+                                              </Tag>
+                                            </div>
+                                            <div className="character-actions">
+                                              {char.bound ? (
+                                                <Button
+                                                  size="small"
+                                                  danger
+                                                  icon={<DeleteOutlined />}
+                                                  onClick={() => handleUnbind(char.name)}
+                                                >
+                                                  解绑
+                                                </Button>
+                                              ) : (
+                                                <Button
+                                                  size="small"
+                                                  type="primary"
+                                                  icon={<UploadOutlined />}
+                                                  onClick={() => openBindingModal(char.name)}
+                                                >
+                                                  绑定
+                                                </Button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {parsedResult.segments.length > 0 && (
+                                  <div className="segment-list">
+                                    <strong>内容分段：</strong>
+                                    <div style={{ marginTop: 8 }}>
+                                      {parsedResult.segments.map((seg, idx) => {
+                                        const tagInfo = segmentTags[seg.type] || segmentTags.other;
+                                        return (
+                                          <div key={`segment-${idx}`} className="segment-item">
+                                            <Tag color={tagInfo.color}>{seg.type}</Tag>
+                                            <Text>{seg.content}</Text>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            ),
+                          },
+                        ]}
+                      />
                     </Card>
-
-                    <div className="results-grid">
-                      {parsedResult.characters.length > 0 && (
-                        <Card className="result-card" variant="borderless">
-                          <div className="card-header">
-                            <UserOutlined />
-                            <Title level={5} className="card-title">
-                              角色
-                            </Title>
-                            <Tag color="blue">{parsedResult.characters.length}</Tag>
-                          </div>
-                          <div className="character-list">
-                            {parsedResult.characters.map(char => {
-                              const binding = characterBindings[char.name];
-                              return (
-                                <div key={char.name} className="character-item">
-                                  <div className="character-avatar">
-                                    {binding?.referenceImagePath &&
-                                    binding.referenceImagePath.trim() !== '' ? (
-                                      <img
-                                        src={api.getImageUrl(binding.referenceImagePath || '')}
-                                        alt={char.name}
-                                        style={{
-                                          width: '100%',
-                                          height: '100%',
-                                          objectFit: 'cover',
-                                          borderRadius: '50%',
-                                        }}
-                                      />
-                                    ) : (
-                                      char.name.charAt(0).toUpperCase()
-                                    )}
-                                  </div>
-                                  <div className="character-info">
-                                    <Text strong>@{char.name}</Text>
-                                    <Tag
-                                      color={char.bound ? 'green' : 'default'}
-                                      className="bind-tag"
-                                      icon={char.bound ? <CheckCircleFilled /> : null}
-                                    >
-                                      {char.bound ? '已绑定' : '未绑定'}
-                                    </Tag>
-                                  </div>
-                                  <div className="character-actions">
-                                    {char.bound ? (
-                                      <Button
-                                        size="small"
-                                        danger
-                                        icon={<DeleteOutlined />}
-                                        onClick={() => handleUnbind(char.name)}
-                                      >
-                                        解绑
-                                      </Button>
-                                    ) : (
-                                      <Button
-                                        size="small"
-                                        type="primary"
-                                        icon={<UploadOutlined />}
-                                        onClick={() => openBindingModal(char.name)}
-                                      >
-                                        绑定参考图
-                                      </Button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </Card>
-                      )}
-
-                      {parsedResult.segments.length > 0 && (
-                        <Card className="result-card" variant="borderless">
-                          <div className="card-header">
-                            <AppstoreOutlined />
-                            <Title level={5} className="card-title">
-                              内容分段
-                            </Title>
-                            <Tag color="purple">{parsedResult.segments.length}</Tag>
-                          </div>
-                          <div className="segment-list">
-                            {parsedResult.segments.map((seg, idx) => {
-                              const tagInfo = segmentTags[seg.type] || segmentTags.other;
-                              return (
-                                <div key={`segment-${idx}`} className="segment-item">
-                                  <Tag
-                                    color={tagInfo.color}
-                                    icon={tagInfo.icon}
-                                    className="segment-tag"
-                                  >
-                                    {seg.type}
-                                  </Tag>
-                                  <Text className="segment-content">{seg.content}</Text>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </Card>
-                      )}
-                    </div>
 
                     {parsedResult.characters.length === 0 && parsedResult.segments.length === 0 && (
                       <Card className="result-card" variant="borderless">
@@ -1401,173 +1435,6 @@ function MainApp() {
                         />
                       </Card>
                     )}
-
-                    <Card className="result-card generate-card" variant="borderless">
-                      <div className="card-header">
-                        <RobotOutlined />
-                        <Title level={5} className="card-title">
-                          AI生成
-                        </Title>
-                        <Button
-                          size="small"
-                          icon={<SettingOutlined />}
-                          onClick={() => setConfigModalVisible(true)}
-                          style={{ marginLeft: 'auto' }}
-                        >
-                          API配置
-                        </Button>
-                      </div>
-
-                      <div className="generate-settings">
-                        <Row gutter={16}>
-                          <Col span={8}>
-                            <Text strong>选择模型：</Text>
-                            <Select
-                              value={selectedModel}
-                              onChange={setSelectedModel}
-                              style={{ width: '100%', marginTop: 4 }}
-                              options={[
-                                { value: 'seedream', label: 'Seeddream 4.5' },
-                                { value: 'banana_pro', label: 'Banana 2' },
-                              ]}
-                            />
-                          </Col>
-                          {selectedModel === 'seedream' ? (
-                            <>
-                              <Col span={8}>
-                                <Text strong>图片尺寸：</Text>
-                                <Select
-                                  value={seedreamSize}
-                                  onChange={setSeedreamSize}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: '1024x1024', label: '1K (1024x1024)' },
-                                    { value: '2048x2048', label: '2K (2048x2048)' },
-                                    { value: '4096x4096', label: '4K (4096x4096)' },
-                                  ]}
-                                />
-                              </Col>
-                              <Col span={8}>
-                                <Text strong>组图功能：</Text>
-                                <Select
-                                  value={sequentialImageGeneration}
-                                  onChange={setSequentialImageGeneration}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: 'disabled', label: '关闭' },
-                                    { value: 'auto', label: '自动' },
-                                  ]}
-                                />
-                              </Col>
-                              <Col span={8}>
-                                <Text strong>返回格式：</Text>
-                                <Select
-                                  value={responseFormat}
-                                  onChange={setResponseFormat}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: 'url', label: 'URL链接' },
-                                    { value: 'b64_json', label: 'Base64' },
-                                  ]}
-                                />
-                              </Col>
-                              <Col span={8}>
-                                <Text strong>水印：</Text>
-                                <Select
-                                  value={watermark}
-                                  onChange={setWatermark}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: 'false', label: '无水印' },
-                                    { value: 'true', label: '有水印' },
-                                  ]}
-                                />
-                              </Col>
-                            </>
-                          ) : (
-                            <>
-                              <Col span={12}>
-                                <Text strong>图片比例：</Text>
-                                <Select
-                                  value={`${imageSize.width}:${imageSize.height}`}
-                                  onChange={value => {
-                                    const [w, h] = value.split(':').map(Number);
-                                    setImageSize({ width: w, height: h });
-                                  }}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: '1:1', label: '1:1 (方形)' },
-                                    { value: '16:9', label: '16:9 (横版)' },
-                                    { value: '9:16', label: '9:16 (竖版)' },
-                                    { value: '4:3', label: '4:3' },
-                                    { value: '3:4', label: '3:4' },
-                                  ]}
-                                />
-                              </Col>
-                              <Col span={12}>
-                                <Text strong>分辨率：</Text>
-                                <Select
-                                  value={bananaResolution}
-                                  onChange={setBananaResolution}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: '1K', label: '1K (1024)' },
-                                    { value: '2K', label: '2K (2048)' },
-                                    { value: '4K', label: '4K (4096)' },
-                                  ]}
-                                />
-                              </Col>
-                              <Col span={12}>
-                                <Text strong>生成数量：</Text>
-                                <Select
-                                  value={imageCount}
-                                  onChange={setImageCount}
-                                  style={{ width: '100%', marginTop: 4 }}
-                                  options={[
-                                    { value: 1, label: '1张' },
-                                    { value: 2, label: '2张' },
-                                    { value: 4, label: '4张' },
-                                  ]}
-                                />
-                              </Col>
-                            </>
-                          )}
-                        </Row>
-
-                        <div style={{ marginTop: 12, textAlign: 'right' }}>
-                          <Button
-                            size="small"
-                            icon={<SettingOutlined />}
-                            onClick={handleSaveGenerationConfig}
-                          >
-                            保存为默认配置
-                          </Button>
-                        </div>
-
-                        <Divider style={{ margin: '16px 0' }} />
-
-                        <div className="generate-actions">
-                          <Button
-                            type="primary"
-                            size="large"
-                            icon={<RobotOutlined />}
-                            onClick={handleGenerate}
-                            loading={generating}
-                            disabled={!parsedResult}
-                          >
-                            {generating ? '生成中...' : '开始生成'}
-                          </Button>
-
-                          {generating && (
-                            <Progress
-                              percent={generationProgress}
-                              status="active"
-                              style={{ marginLeft: 16, width: 200 }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    </Card>
 
                     {generationResult && (
                       <Card className="result-card" variant="borderless">
@@ -1903,7 +1770,10 @@ function MainApp() {
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
                     <p>
-                      如果看不见窗口，按 <Text strong>Ctrl + Shift + P</Text>{' '}
+                      如果看不见窗口，按{' '}
+                      <Text strong style={{ color: '#6366f1' }}>
+                        Ctrl + Shift + P
+                      </Text>{' '}
                       或者点击屏幕右下角的托盘图标（小机器人图标）
                     </p>
                   </div>
@@ -1915,7 +1785,14 @@ function MainApp() {
                   <div style={{ color: '#666', marginBottom: 8 }}>
                     <p>在输入框中描述你想要生成的画面</p>
                     <p>
-                      <Text strong>绑定角色：</Text> 在角色名字前加 <Text code>@</Text> 符号，例如：
+                      <Text strong style={{ color: '#8b5cf6' }}>
+                        绑定角色：
+                      </Text>{' '}
+                      在角色名字前加{' '}
+                      <Text code style={{ color: '#ef4444' }}>
+                        @
+                      </Text>{' '}
+                      符号，例如：
                       <br />
                       <Text code mark>
                         在森林里@小明 正在跑步
@@ -1928,7 +1805,10 @@ function MainApp() {
                 title: '第三步：解析提示词',
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>点击「开始解析」按钮，系统会识别出角色和场景</p>
+                    <p>
+                      点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「开始解析」</Text>
+                      按钮，系统会识别出角色和场景
+                    </p>
                   </div>
                 ),
               },
@@ -1936,13 +1816,24 @@ function MainApp() {
                 title: '第四步：绑定参考图（可选）',
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>如果提示词中有 @角色名，系统会提示你上传该角色的图片作为参考</p>
                     <p>
-                      点击「绑定参考图」→ 选择或上传图片 → 选择类型（人物/人脸/全身/场景）→
-                      点击「确认绑定」
+                      如果提示词中有 <Text style={{ color: '#ef4444' }}>@角色名</Text>
+                      ，系统会提示你上传该角色的图片作为参考
                     </p>
                     <p>
-                      <Text strong>从图库选择：</Text> 点击「从图库选择」可以挑选之前已保存的参考图
+                      点击<Text style={{ color: '#6366f1' }}>「绑定参考图」</Text>→ 选择或上传图片 →
+                      选择类型（<Text style={{ color: '#10b981' }}>人物</Text>/
+                      <Text style={{ color: '#10b981' }}>人脸</Text>/
+                      <Text style={{ color: '#10b981' }}>全身</Text>/
+                      <Text style={{ color: '#10b981' }}>场景</Text>）→ 点击
+                      <Text style={{ color: '#6366f1' }}>「确认绑定」</Text>
+                    </p>
+                    <p>
+                      <Text strong style={{ color: '#f59e0b' }}>
+                        从图库选择：
+                      </Text>{' '}
+                      点击<Text style={{ color: '#6366f1' }}>「从图库选择」</Text>
+                      可以挑选之前已保存的参考图
                     </p>
                   </div>
                 ),
@@ -1951,10 +1842,15 @@ function MainApp() {
                 title: '第五步：管理参考图',
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>点击导航栏「参考图管理」按钮可以：</p>
+                    <p>
+                      点击导航栏<Text style={{ color: '#6366f1' }}>「参考图管理」</Text>按钮可以：
+                    </p>
                     <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
                       <li>查看所有已绑定的参考图</li>
-                      <li>按类型筛选（人物/场景）</li>
+                      <li>
+                        按类型筛选（<Text style={{ color: '#10b981' }}>人物</Text>/
+                        <Text style={{ color: '#10b981' }}>场景</Text>）
+                      </li>
                       <li>搜索参考图（按角色名或标签）</li>
                       <li>为参考图添加/移除标签</li>
                       <li>删除不需要的参考图</li>
@@ -1966,9 +1862,17 @@ function MainApp() {
                 title: '第六步：生成图片',
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>选择模型（Seedream 或 Banana 2）和图片参数</p>
-                    <p>点击「开始生成」等待图片生成完成</p>
-                    <p>生成完成后可以点击「保存到本地」</p>
+                    <p>
+                      选择模型（<Text style={{ color: '#10b981' }}>Seedream</Text> 或{' '}
+                      <Text style={{ color: '#10b981' }}>Banana 2</Text>）和图片参数
+                    </p>
+                    <p>
+                      点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「开始生成」</Text>
+                      等待图片生成完成
+                    </p>
+                    <p>
+                      生成完成后可以点击<Text style={{ color: '#6366f1' }}>「保存到本地」</Text>
+                    </p>
                   </div>
                 ),
               },
@@ -1976,21 +1880,69 @@ function MainApp() {
                 title: '第七步：批量处理（可选）',
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>开启「批量模式」可一次性生成多张图片：</p>
+                    <p>
+                      开启<Text style={{ color: '#6366f1', fontWeight: 500 }}>「批量模式」</Text>
+                      可一次性生成多张图片：
+                    </p>
                     <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
                       <li>开启批量模式开关</li>
                       <li>配置分隔符或开启自动识别</li>
-                      <li>输入多个场景的提示词（用 | 分隔）</li>
-                      <li>点击「拆分场景」拆分提示词</li>
+                      <li>
+                        输入多个场景的提示词（用 <Text code>|</Text> 分隔）
+                      </li>
+                      <li>
+                        点击<Text style={{ color: '#6366f1' }}>「拆分场景」</Text>拆分提示词
+                      </li>
                       <li>为每个场景绑定角色参考图（可选）</li>
-                      <li>点击「设置」调整模型和并发数</li>
-                      <li>点击「全部生图」并发生成图片</li>
+                      <li>
+                        点击<Text style={{ color: '#6366f1' }}>「设置」</Text>调整模型和并发数
+                      </li>
+                      <li>
+                        点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「全部生图」</Text>
+                        并发生成图片
+                      </li>
                     </ul>
+                    <p>
+                      <Text strong style={{ color: '#8b5cf6' }}>
+                        全局绑定：
+                      </Text>{' '}
+                      批量模式下可切换<Text style={{ color: '#8b5cf6' }}>「全局绑定」</Text>
+                      模式，一次绑定所有场景共享
+                    </p>
                   </div>
                 ),
               },
               {
-                title: '第八步：隐藏窗口',
+                title: '第八步：单图模式生成',
+                description: (
+                  <div style={{ color: '#666', marginBottom: 8 }}>
+                    <p>单图模式下也可批量生成所有分段图片：</p>
+                    <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                      <li>
+                        输入提示词并点击<Text style={{ color: '#6366f1' }}>「开始解析」</Text>
+                      </li>
+                      <li>
+                        解析结果以<Text style={{ color: '#10b981' }}>折叠面板</Text>形式展示
+                      </li>
+                      <li>
+                        点击<Text style={{ color: '#6366f1' }}>「生成设置」</Text>调整参数
+                      </li>
+                      <li>
+                        点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「全部生图」</Text>
+                        批量生成所有分段
+                      </li>
+                    </ul>
+                    <p>
+                      <Text strong style={{ color: '#f59e0b' }}>
+                        模式切换：
+                      </Text>{' '}
+                      切换模式时会<Text style={{ color: '#ef4444' }}>自动清除</Text>之前的结果
+                    </p>
+                  </div>
+                ),
+              },
+              {
+                title: '第九步：隐藏窗口',
                 description: (
                   <div style={{ color: '#666' }}>
                     <p>
