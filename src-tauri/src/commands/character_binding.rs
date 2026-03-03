@@ -256,10 +256,19 @@ pub fn get_reference_images(query: Option<ReferenceImageQuery>) -> Vec<Character
 
     let mut result: Vec<CharacterBinding> = bindings.values().cloned().collect();
 
+    result.iter_mut().for_each(|b| {
+        if let Some(t) = tags.get(&b.character_name) {
+            b.tags = t.clone();
+        }
+    });
+
     if let Some(q) = query {
         if let Some(ref img_type) = q.image_type {
             if !img_type.is_empty() {
-                result.retain(|b| b.image_type == *img_type);
+                let img_type_str = img_type.as_str();
+                result.retain(|b| {
+                    b.image_type == *img_type || b.tags.iter().any(|t| t.contains(img_type_str))
+                });
             }
         }
 
@@ -281,12 +290,6 @@ pub fn get_reference_images(query: Option<ReferenceImageQuery>) -> Vec<Character
             }
         }
     }
-
-    result.iter_mut().for_each(|b| {
-        if let Some(t) = tags.get(&b.character_name) {
-            b.tags = t.clone();
-        }
-    });
 
     result
 }

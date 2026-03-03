@@ -20,7 +20,6 @@ import {
   List,
   Image,
   Select,
-  Progress,
   Row,
   Col,
   Divider,
@@ -49,7 +48,6 @@ import type {
   ImageGenerationParams,
   ImageGenerationResult,
   APIConfig,
-  GenerationConfig,
   BatchSplitResult,
 } from './types';
 import * as api from './api';
@@ -87,7 +85,7 @@ function MainApp() {
   const [bindingModalVisible, setBindingModalVisible] = useState(false);
   const [selectedCharacter, setSelectedCharacter] = useState<string>('');
   const [uploadedImage, setUploadedImage] = useState<string>('');
-  const [imageType, setImageType] = useState<'人物' | '场景'>('人物');
+  const [imageType, setImageType] = useState<'人物' | '人脸' | '全身' | '场景'>('人物');
   const [bindingLoading, setBindingLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [activeTab, setActiveTab] = useState<'upload' | 'library'>('upload');
@@ -100,7 +98,6 @@ function MainApp() {
     height: 1,
   });
   const [bananaResolution, setBananaResolution] = useState<string>('1K');
-  const [imageCount, setImageCount] = useState(1);
   const [imageQuality, setImageQuality] = useState<'standard' | 'high' | 'ultra'>('standard');
   const [seedreamSize, setSeedreamSize] = useState<string>('1024x1024');
   const [sequentialImageGeneration, setSequentialImageGeneration] = useState<'auto' | 'disabled'>(
@@ -108,9 +105,7 @@ function MainApp() {
   );
   const [responseFormat, setResponseFormat] = useState<'url' | 'b64_json'>('url');
   const [watermark, setWatermark] = useState<string>('false');
-  const [generating, setGenerating] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState(0);
-  const [generationResult, setGenerationResult] = useState<ImageGenerationResult | null>(null);
+  const [generationResult] = useState<ImageGenerationResult | null>(null);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [helpModalVisible, setHelpModalVisible] = useState(false);
   const [referenceModalVisible, setReferenceModalVisible] = useState(false);
@@ -120,8 +115,9 @@ function MainApp() {
   const [referenceSearch, setReferenceSearch] = useState('');
   const [allTags, setAllTags] = useState<string[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [editingTag, setEditingTag] = useState<string | null>(null);
   const [newTag, setNewTag] = useState('');
+  const [addTagModalVisible, setAddTagModalVisible] = useState(false);
+  const [addTagCharacter, setAddTagCharacter] = useState('');
   const [characterBindings, setCharacterBindings] = useState<Record<string, CharacterBinding>>({});
   const [apiConfig, setApiConfig] = useState<APIConfig>({
     seedream: { baseUrl: '', apiKey: '' },
@@ -198,7 +194,6 @@ function MainApp() {
         if (config.size) setSeedreamSize(config.size);
       }
 
-      setImageCount(config.count);
       setImageQuality(config.quality as 'standard' | 'high' | 'ultra');
       if (config.sequential_image_generation)
         setSequentialImageGeneration(config.sequential_image_generation as 'auto' | 'disabled');
@@ -507,80 +502,6 @@ function MainApp() {
     message.success(`角色 @${characterName} 已解绑`);
   };
 
-  const handleGenerate = async () => {
-    if (!parsedResult) {
-      message.warning('请先解析提示词');
-      return;
-    }
-
-    setGenerating(true);
-    setGenerationProgress(0);
-    setGenerationResult(null);
-
-    try {
-      let width: number, height: number;
-
-      if (selectedModel === 'seedream') {
-        const [w, h] = seedreamSize.split('x').map(Number);
-        width = w;
-        height = h;
-      } else {
-        // banana_pro uses aspect ratio and resolution
-        const baseResolution =
-          bananaResolution === '4K' ? 4096 : bananaResolution === '2K' ? 2048 : 1024;
-        const ratio = imageSize.width / imageSize.height;
-        if (ratio >= 1) {
-          width = baseResolution;
-          height = Math.round(baseResolution / ratio);
-        } else {
-          height = baseResolution;
-          width = Math.round(baseResolution * ratio);
-        }
-      }
-
-      const params: ImageGenerationParams = {
-        model: selectedModel,
-        prompt: parsedResult.original,
-        characterBindings: Object.values(characterBindings).map(b => ({
-          character_name: b.characterName,
-          reference_image_path: b.referenceImagePath,
-          image_type: b.imageType,
-        })),
-        width,
-        height,
-        count: imageCount,
-        quality: imageQuality,
-        watermark: selectedModel === 'seedream' ? watermark === 'true' : undefined,
-      };
-
-      const progressInterval = setInterval(() => {
-        setGenerationProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          return prev + 10;
-        });
-      }, 500);
-
-      const result = await api.generateImage(params);
-
-      clearInterval(progressInterval);
-      setGenerationProgress(100);
-      setGenerationResult(result);
-
-      if (result.success) {
-        message.success('图片生成成功！');
-      } else {
-        message.error(`生成失败: ${result.error}`);
-      }
-    } catch (error) {
-      message.error(`生成失败: ${error}`);
-    } finally {
-      setGenerating(false);
-    }
-  };
-
   const handleSaveConfig = async () => {
     try {
       await api.saveApiConfig(apiConfig);
@@ -652,16 +573,16 @@ function MainApp() {
     }
   };
 
-  const handleAddTag = async (characterName: string) => {
+  const handleAddTag = async () => {
     if (!newTag.trim()) {
       message.warning('请输入标签');
       return;
     }
     try {
-      await api.addTagToReference(characterName, newTag.trim());
+      await api.addTagToReference(addTagCharacter, newTag.trim());
       message.success('标签添加成功');
       setNewTag('');
-      setEditingTag(null);
+      setAddTagModalVisible(false);
       await loadReferenceImages();
       await loadAllTags();
     } catch (error) {
@@ -687,38 +608,6 @@ function MainApp() {
   const handleFilterTypeChange = (type: string) => {
     setReferenceFilterType(type);
     loadReferenceImages();
-  };
-
-  const handleSaveGenerationConfig = async () => {
-    try {
-      let width: number, height: number;
-
-      if (selectedModel === 'seedream') {
-        const [w, h] = seedreamSize.split('x').map(Number);
-        width = w;
-        height = h;
-      } else {
-        width = imageSize.width;
-        height = imageSize.height;
-      }
-
-      const config: GenerationConfig = {
-        model: selectedModel,
-        width,
-        height,
-        count: imageCount,
-        quality: imageQuality,
-        size: selectedModel === 'seedream' ? seedreamSize : bananaResolution,
-        sequential_image_generation:
-          selectedModel === 'seedream' ? sequentialImageGeneration : undefined,
-        response_format: selectedModel === 'seedream' ? responseFormat : undefined,
-        watermark: selectedModel === 'seedream' ? watermark === 'true' : false,
-      };
-      await api.saveGenerationConfig(config);
-      message.success('生成参数配置已保存为默认');
-    } catch (error) {
-      message.error(`保存失败: ${error}`);
-    }
   };
 
   const handleSaveImage = async (imageUrl: string) => {
@@ -2003,6 +1892,8 @@ function MainApp() {
                 allowClear
                 options={[
                   { value: '人物', label: '人物' },
+                  { value: '人脸', label: '人脸' },
+                  { value: '全身', label: '全身' },
                   { value: '场景', label: '场景' },
                 ]}
               />
@@ -2014,11 +1905,32 @@ function MainApp() {
                 value={selectedTags}
                 onChange={tags => {
                   setSelectedTags(tags);
+                  if (tags.length === 0) {
+                    setReferenceFilterType('');
+                    setReferenceSearch('');
+                  }
                   setTimeout(() => loadReferenceImages(), 0);
                 }}
                 style={{ width: '100%' }}
                 allowClear
-                options={allTags.map(tag => ({ value: tag, label: tag }))}
+                options={[
+                  { value: '可爱', label: '可爱' },
+                  { value: '帅气', label: '帅气' },
+                  { value: '美丽', label: '美丽' },
+                  { value: '成熟', label: '成熟' },
+                  { value: '青春', label: '青春' },
+                  { value: '活泼', label: '活泼' },
+                  { value: '内向', label: '内向' },
+                  { value: '冷酷', label: '冷酷' },
+                  ...allTags
+                    .filter(
+                      t =>
+                        !['可爱', '帅气', '美丽', '成熟', '青春', '活泼', '内向', '冷酷'].includes(
+                          t
+                        )
+                    )
+                    .map(t => ({ value: t, label: t })),
+                ]}
               />
             </Col>
           </Row>
@@ -2045,6 +1957,17 @@ function MainApp() {
                         </div>
                       }
                       actions={[
+                        <a
+                          key="addTag"
+                          onClick={() => {
+                            setAddTagCharacter(item.characterName);
+                            setNewTag('');
+                            setAddTagModalVisible(true);
+                          }}
+                          style={{ color: '#1890ff', cursor: 'pointer' }}
+                        >
+                          <PlusOutlined /> 添加标签
+                        </a>,
                         <Popconfirm
                           title="确认删除"
                           description="确定要删除这个参考图吗？"
@@ -2076,40 +1999,9 @@ function MainApp() {
                                       {tag}
                                     </Tag>
                                   ))}
-                                  {editingTag === item.characterName ? (
-                                    <Input
-                                      size="small"
-                                      style={{ width: 80 }}
-                                      value={newTag}
-                                      onChange={e => setNewTag(e.target.value)}
-                                      onPressEnter={() => handleAddTag(item.characterName)}
-                                      onBlur={() => handleAddTag(item.characterName)}
-                                      autoFocus
-                                    />
-                                  ) : (
-                                    <Tag
-                                      icon={<PlusOutlined />}
-                                      style={{ cursor: 'pointer', marginBottom: 4 }}
-                                      onClick={() => {
-                                        setEditingTag(item.characterName);
-                                        setNewTag('');
-                                      }}
-                                    >
-                                      添加标签
-                                    </Tag>
-                                  )}
                                 </>
                               ) : (
-                                <Tag
-                                  icon={<PlusOutlined />}
-                                  style={{ cursor: 'pointer' }}
-                                  onClick={() => {
-                                    setEditingTag(item.characterName);
-                                    setNewTag('');
-                                  }}
-                                >
-                                  添加标签
-                                </Tag>
+                                <Text type="secondary">暂无标签</Text>
                               )}
                             </div>
                           </div>
@@ -2129,6 +2021,39 @@ function MainApp() {
               <Text type="secondary">共 {referenceImages.length} 张参考图</Text>
             </div>
           )}
+
+          <Modal
+            title="添加标签"
+            open={addTagModalVisible}
+            onCancel={() => setAddTagModalVisible(false)}
+            onOk={handleAddTag}
+            okText="添加"
+          >
+            <p>为 @{addTagCharacter} 添加标签：</p>
+            <Select
+              mode="tags"
+              placeholder="输入或选择标签"
+              value={newTag ? [newTag] : []}
+              onChange={vals => setNewTag(vals[vals.length - 1] || '')}
+              style={{ width: '100%' }}
+              options={[
+                { value: '可爱', label: '可爱' },
+                { value: '帅气', label: '帅气' },
+                { value: '美丽', label: '美丽' },
+                { value: '成熟', label: '成熟' },
+                { value: '青春', label: '青春' },
+                { value: '活泼', label: '活泼' },
+                { value: '内向', label: '内向' },
+                { value: '冷酷', label: '冷酷' },
+                ...allTags
+                  .filter(
+                    t =>
+                      !['可爱', '帅气', '美丽', '成熟', '青春', '活泼', '内向', '冷酷'].includes(t)
+                  )
+                  .map(t => ({ value: t, label: t })),
+              ]}
+            />
+          </Modal>
         </div>
       </Modal>
     </ConfigProvider>

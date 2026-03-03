@@ -20,7 +20,7 @@ export interface CharacterRef {
 export interface CharacterBinding {
   characterName: string;
   referenceImagePath?: string;
-  imageType: '人物' | '场景';
+  imageType: '人物' | '人脸' | '全身' | '场景';
   createdAt: string;
   bound: boolean;
   tags?: string[];

@@ -486,6 +486,25 @@ async fn api_get_default_generation_config() -> Result<axum::Json<crate::command
 }
 
 #[derive(Debug, Deserialize)]
+pub struct AddTagBody {
+    #[serde(alias = "characterName", alias = "character_name")]
+    character_name: String,
+    tag: String,
+}
+
+async fn api_add_tag_handler(axum::extract::Json(body): axum::extract::Json<AddTagBody>) -> Result<axum::Json<bool>, String> {
+    use crate::commands::character_binding::add_tag_to_reference;
+    let result = add_tag_to_reference(body.character_name, body.tag)?;
+    Ok(axum::Json(result))
+}
+
+async fn api_remove_tag_handler(axum::extract::Json(body): axum::extract::Json<AddTagBody>) -> Result<axum::Json<bool>, String> {
+    use crate::commands::character_binding::remove_tag_from_reference;
+    let result = remove_tag_from_reference(body.character_name, body.tag)?;
+    Ok(axum::Json(result))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct TestConnectionBody {
     model: String,
     #[serde(alias = "baseUrl", alias = "base_url")]
@@ -534,6 +553,8 @@ pub fn create_api_router() -> Router {
         .route("/api/reference-images/tags", get(api_get_all_tags_handler))
         .route("/api/reference-images/by-type", post(api_get_references_by_type_handler))
         .route("/api/reference-images/delete", post(api_delete_reference_image_handler))
+        .route("/api/reference-images/add-tag", post(api_add_tag_handler))
+        .route("/api/reference-images/remove-tag", post(api_remove_tag_handler))
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors)
 }
