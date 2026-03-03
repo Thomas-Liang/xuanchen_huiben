@@ -1732,18 +1732,27 @@ function MainApp() {
                 description: (
                   <div style={{ color: '#666', marginBottom: 8 }}>
                     <p>
-                      点击导航栏<Text style={{ color: '#6366f1' }}>「参考图管理」</Text>按钮可以：
+                      点击导航栏<Text style={{ color: '#6366f1' }}>「参考图库」</Text>按钮可以：
                     </p>
                     <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
                       <li>查看所有已绑定的参考图</li>
                       <li>
                         按类型筛选（<Text style={{ color: '#10b981' }}>人物</Text>/
+                        <Text style={{ color: '#10b981' }}>人脸</Text>/
+                        <Text style={{ color: '#10b981' }}>全身</Text>/
                         <Text style={{ color: '#10b981' }}>场景</Text>）
                       </li>
                       <li>搜索参考图（按角色名或标签）</li>
+                      <li>按标签筛选</li>
                       <li>为参考图添加/移除标签</li>
                       <li>删除不需要的参考图</li>
                     </ul>
+                    <p>
+                      <Text strong style={{ color: '#f59e0b' }}>
+                        预设标签：
+                      </Text>{' '}
+                      可爱、帅气、美丽、成熟、青春、活泼、内向、冷酷，也可输入自定义标签
+                    </p>
                   </div>
                 ),
               },
