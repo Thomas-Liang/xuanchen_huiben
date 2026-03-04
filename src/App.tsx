@@ -26,6 +26,7 @@ import {
   Alert,
   Steps,
   Popconfirm,
+  Checkbox,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -41,6 +42,7 @@ import {
   SearchOutlined,
   PlusOutlined,
   EyeOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import type {
   ParsedPrompt,
@@ -90,6 +92,7 @@ function MainApp() {
   const [isDragging, setIsDragging] = useState(false);
   const [activeTab, setActiveTab] = useState<'upload' | 'library'>('upload');
   const [referenceImageLibrary, setReferenceImageLibrary] = useState<CharacterBinding[]>([]);
+  const [charactersToBind, setCharactersToBind] = useState<string[]>([]);
   const dragCounter = useRef(0);
 
   const [selectedModel, setSelectedModel] = useState<'seedream' | 'banana_pro'>('seedream');
@@ -134,6 +137,8 @@ function MainApp() {
   const [batchProgress, setBatchProgress] = useState<any>(null);
   const [concurrency, setConcurrency] = useState(2);
   const [batchGenModalVisible, setBatchGenModalVisible] = useState(false);
+  const [batchGenerationMode, setBatchGenerationMode] = useState<'sequential' | 'parallel'>('parallel');
+  const [failStrategy, setFailStrategy] = useState<'continue' | 'stop'>('continue');
 
   useEffect(() => {
     console.log('App loaded, checking Tauri...');
@@ -419,8 +424,10 @@ function MainApp() {
     }
   };
 
-  const openBindingModal = async (characterName: string) => {
-    setSelectedCharacter(characterName);
+  const openBindingModal = async (characterName: string | string[]) => {
+    const chars = Array.isArray(characterName) ? characterName : [characterName];
+    setSelectedCharacter(chars[0]);
+    setCharactersToBind(chars);
     setUploadedImage('');
     setActiveTab('upload');
     setBindingModalVisible(true);
@@ -437,8 +444,8 @@ function MainApp() {
   };
 
   const handleBindSubmit = async () => {
-    if (!selectedCharacter) {
-      message.warning('请选择角色');
+    if (charactersToBind.length === 0) {
+      message.warning('请选择要绑定的角色');
       return;
     }
 
@@ -449,33 +456,35 @@ function MainApp() {
 
     setBindingLoading(true);
     try {
-      let binding;
-      if (uploadedImage.startsWith('data:')) {
-        const base64Data = uploadedImage.split(',')[1];
-        binding = await api.saveReferenceImage(selectedCharacter, base64Data, imageType);
-      } else {
-        binding = await api.bindCharacterReference(selectedCharacter, uploadedImage, imageType);
+      for (const charName of charactersToBind) {
+        let binding;
+        if (uploadedImage.startsWith('data:')) {
+          const base64Data = uploadedImage.split(',')[1];
+          binding = await api.saveReferenceImage(charName, base64Data, imageType);
+        } else {
+          binding = await api.bindCharacterReference(charName, uploadedImage, imageType);
+        }
+
+        setCharacterBindings(prev => ({
+          ...prev,
+          [charName]: {
+            characterName: binding.characterName,
+            referenceImagePath: binding.referenceImagePath,
+            imageType: binding.imageType,
+            createdAt: binding.createdAt,
+            bound: true,
+          },
+        }));
+
+        if (parsedResult) {
+          const updatedCharacters = parsedResult.characters.map(c =>
+            c.name === charName ? { ...c, bound: true } : c
+          );
+          setParsedResult({ ...parsedResult, characters: updatedCharacters });
+        }
       }
 
-      setCharacterBindings(prev => ({
-        ...prev,
-        [selectedCharacter]: {
-          characterName: binding.characterName,
-          referenceImagePath: binding.referenceImagePath,
-          imageType: binding.imageType,
-          createdAt: binding.createdAt,
-          bound: true,
-        },
-      }));
-
-      if (parsedResult) {
-        const updatedCharacters = parsedResult.characters.map(c =>
-          c.name === selectedCharacter ? { ...c, bound: true } : c
-        );
-        setParsedResult({ ...parsedResult, characters: updatedCharacters });
-      }
-
-      message.success(`角色 @${selectedCharacter} 绑定成功`);
+      message.success(`绑定成功，共绑定${charactersToBind.length}个角色`);
       setBindingModalVisible(false);
     } catch (error) {
       message.error(`绑定失败: ${error}`);
@@ -848,6 +857,24 @@ function MainApp() {
                         <Tag color="blue" style={{ marginLeft: 8 }}>
                           {batchSplitResult.total} 个场景
                         </Tag>
+                        <Button
+                          size="small"
+                          icon={<LinkOutlined />}
+                          onClick={() => {
+                            const allChars = new Set<string>();
+                            batchSplitResult.segments.forEach((seg: any) => {
+                              (seg.characters || []).forEach((char: any) => allChars.add(char.name));
+                            });
+                            const chars = Array.from(allChars);
+                            if (chars.length === 0) {
+                              message.warning('没有需要绑定的角色');
+                              return;
+                            }
+                            openBindingModal(chars);
+                          }}
+                        >
+                          全局绑定所有角色
+                        </Button>
                       </Space>
                       <Space>
                         <Button
@@ -1068,6 +1095,20 @@ function MainApp() {
                     />
                   </Col>
                   <Col span={12}>
+                    <Text strong>生成模式：</Text>
+                    <Select
+                      value={batchGenerationMode}
+                      onChange={setBatchGenerationMode}
+                      style={{ width: '100%', marginTop: 4 }}
+                      options={[
+                        { value: 'parallel', label: '并行生成' },
+                        { value: 'sequential', label: '顺序生成' },
+                      ]}
+                    />
+                  </Col>
+                </Row>
+                <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+                  <Col span={12}>
                     <Text strong>并发数：</Text>
                     <InputNumber
                       min={1}
@@ -1075,6 +1116,19 @@ function MainApp() {
                       value={concurrency}
                       onChange={value => setConcurrency(value || 2)}
                       style={{ width: '100%', marginTop: 4 }}
+                      disabled={batchGenerationMode === 'sequential'}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Text strong>失败策略：</Text>
+                    <Select
+                      value={failStrategy}
+                      onChange={setFailStrategy}
+                      style={{ width: '100%', marginTop: 4 }}
+                      options={[
+                        { value: 'continue', label: '失败后继续' },
+                        { value: 'stop', label: '失败后停止' },
+                      ]}
                     />
                   </Col>
                 </Row>
@@ -1374,7 +1428,27 @@ function MainApp() {
       </Layout>
 
       <Modal
-        title={`绑定角色 @${selectedCharacter} 的参考图`}
+        title={
+          <div>
+            <div style={{ marginBottom: 8 }}>绑定参考图</div>
+            {charactersToBind.length > 1 && (
+              <div style={{ fontSize: 12, color: '#666' }}>
+                <div style={{ marginBottom: 4 }}>选择要绑定的角色：</div>
+                <Checkbox.Group
+                  value={charactersToBind}
+                  onChange={(values) => setCharactersToBind(values as string[])}
+                  style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}
+                >
+                  {Array.from(new Set(charactersToBind)).map(charName => (
+                    <Checkbox key={charName} value={charName}>
+                      @{charName}
+                    </Checkbox>
+                  ))}
+                </Checkbox.Group>
+              </div>
+            )}
+          </div>
+        }
         open={bindingModalVisible}
         onCancel={() => setBindingModalVisible(false)}
         footer={null}
