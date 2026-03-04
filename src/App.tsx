@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { App } from 'antd';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { App, theme } from 'antd';
 import {
   ConfigProvider,
   Layout,
@@ -27,6 +27,7 @@ import {
   Steps,
   Popconfirm,
   Checkbox,
+  Dropdown,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -43,6 +44,9 @@ import {
   PlusOutlined,
   EyeOutlined,
   LinkOutlined,
+  SunOutlined,
+  MoonOutlined,
+  DesktopOutlined,
 } from '@ant-design/icons';
 import type {
   ParsedPrompt,
@@ -54,19 +58,27 @@ import type {
 } from './types';
 import * as api from './api';
 import type { ReferenceImageQuery } from './api';
+import { useTheme } from './theme';
 import './App.css';
 
 const { Header, Content } = Layout;
 const { TextArea } = Input;
 const { Title, Text } = Typography;
 
-const themeConfig = {
+const getThemeConfig = (isDark: boolean) => ({
   token: {
     colorPrimary: '#6366f1',
     borderRadius: 12,
     fontFamily: "'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif",
+    colorBgContainer: isDark ? '#1e293b' : '#ffffff',
+    colorBgElevated: isDark ? '#1e293b' : '#ffffff',
+    colorBgLayout: isDark ? '#0f172a' : '#f8fafc',
+    colorText: isDark ? '#f1f5f9' : '#1e293b',
+    colorTextSecondary: isDark ? '#94a3b8' : '#64748b',
+    colorBorder: isDark ? '#334155' : '#e2e8f0',
   },
-};
+  algorithm: isDark ? theme.darkAlgorithm : undefined,
+});
 
 const segmentTags: Record<string, { color: string; icon: any }> = {
   scene: { color: '#10b981', icon: <AppstoreOutlined /> },
@@ -81,6 +93,7 @@ const segmentTags: Record<string, { color: string; icon: any }> = {
 
 function MainApp() {
   const { message } = App.useApp();
+  const { resolvedTheme, setMode } = useTheme();
   const [prompt, setPrompt] = useState('');
   const [parsedResult, setParsedResult] = useState<ParsedPrompt | null>(null);
   const [loading, setLoading] = useState(false);
@@ -108,7 +121,7 @@ function MainApp() {
   );
   const [responseFormat, setResponseFormat] = useState<'url' | 'b64_json'>('url');
   const [watermark, setWatermark] = useState<string>('false');
-  const [generationResult] = useState<ImageGenerationResult | null>(null);
+  const [generationResult, setGenerationResult] = useState<ImageGenerationResult | null>(null);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [helpModalVisible, setHelpModalVisible] = useState(false);
   const [referenceModalVisible, setReferenceModalVisible] = useState(false);
@@ -137,7 +150,9 @@ function MainApp() {
   const [batchProgress, setBatchProgress] = useState<any>(null);
   const [concurrency, setConcurrency] = useState(2);
   const [batchGenModalVisible, setBatchGenModalVisible] = useState(false);
-  const [batchGenerationMode, setBatchGenerationMode] = useState<'sequential' | 'parallel'>('parallel');
+  const [batchGenerationMode, setBatchGenerationMode] = useState<'sequential' | 'parallel'>(
+    'parallel'
+  );
   const [failStrategy, setFailStrategy] = useState<'continue' | 'stop'>('continue');
 
   useEffect(() => {
@@ -338,6 +353,10 @@ function MainApp() {
 
         const result = await api.generateImage(params);
 
+        if (!batchMode) {
+          setGenerationResult(result);
+        }
+
         setBatchProgress((prev: any) => {
           if (!prev) return prev;
           const newResults = [...prev.sceneResults];
@@ -349,6 +368,13 @@ function MainApp() {
           return { ...prev, current: prev.current + 1, sceneResults: newResults };
         });
       } catch (err) {
+        if (!batchMode) {
+          setGenerationResult({
+            success: false,
+            images: [],
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
         setBatchProgress((prev: any) => {
           if (!prev) return prev;
           const newResults = [...prev.sceneResults];
@@ -649,6 +675,8 @@ function MainApp() {
     ],
   };
 
+  const themeConfig = useMemo(() => getThemeConfig(resolvedTheme === 'dark'), [resolvedTheme]);
+
   return (
     <ConfigProvider theme={themeConfig}>
       <Layout className="app-layout">
@@ -685,6 +713,35 @@ function MainApp() {
             >
               使用帮助
             </Button>
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'light',
+                    icon: <SunOutlined />,
+                    label: '亮色主题',
+                    onClick: () => setMode('light'),
+                  },
+                  {
+                    key: 'dark',
+                    icon: <MoonOutlined />,
+                    label: '暗色主题',
+                    onClick: () => setMode('dark'),
+                  },
+                  {
+                    key: 'system',
+                    icon: <DesktopOutlined />,
+                    label: '跟随系统',
+                    onClick: () => setMode('system'),
+                  },
+                ],
+              }}
+              trigger={['click']}
+            >
+              <Button type="text" style={{ color: '#fff', height: 36 }}>
+                {resolvedTheme === 'dark' ? <MoonOutlined /> : <SunOutlined />}
+              </Button>
+            </Dropdown>
           </Space>
         </Header>
         <Content className="app-content">
@@ -863,7 +920,9 @@ function MainApp() {
                           onClick={() => {
                             const allChars = new Set<string>();
                             batchSplitResult.segments.forEach((seg: any) => {
-                              (seg.characters || []).forEach((char: any) => allChars.add(char.name));
+                              (seg.characters || []).forEach((char: any) =>
+                                allChars.add(char.name)
+                              );
                             });
                             const chars = Array.from(allChars);
                             if (chars.length === 0) {
@@ -1257,6 +1316,7 @@ function MainApp() {
                             type="primary"
                             size="small"
                             icon={<PlayCircleOutlined />}
+                            loading={batchGenerating}
                             onClick={handleBatchGenerate}
                             disabled={!parsedResult}
                             style={{
@@ -1264,7 +1324,9 @@ function MainApp() {
                               border: 'none',
                             }}
                           >
-                            全部生图
+                            {batchGenerating
+                              ? `生成中 (${batchProgress?.current}/${batchProgress?.total})`
+                              : '全部生图'}
                           </Button>
                         </Space>
                       </div>
@@ -1363,6 +1425,51 @@ function MainApp() {
                                     </div>
                                   </div>
                                 )}
+
+                                {generationResult && (
+                                  <div style={{ marginTop: 16 }}>
+                                    <Divider style={{ margin: '16px 0' }} />
+                                    <div className="card-header">
+                                      <Title level={5} className="card-title">
+                                        生成结果
+                                      </Title>
+                                      {generationResult.success ? (
+                                        <Tag color="green">成功</Tag>
+                                      ) : (
+                                        <Tag color="red">失败</Tag>
+                                      )}
+                                    </div>
+
+                                    {generationResult.success ? (
+                                      <Row gutter={16}>
+                                        {generationResult.images.map((img, idx) => (
+                                          <Col key={`gen-img-${idx}`} span={12}>
+                                            <Image
+                                              src={img}
+                                              alt={`生成图片 ${idx + 1}`}
+                                              style={{ width: '100%', borderRadius: 8 }}
+                                            />
+                                            <Button
+                                              type="link"
+                                              icon={<DownloadOutlined />}
+                                              onClick={() => handleSaveImage(img)}
+                                              style={{ marginTop: 8 }}
+                                            >
+                                              保存到本地
+                                            </Button>
+                                          </Col>
+                                        ))}
+                                      </Row>
+                                    ) : (
+                                      <Alert
+                                        message="生成失败"
+                                        description={generationResult.error}
+                                        type="error"
+                                        showIcon
+                                      />
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             ),
                           },
@@ -1379,44 +1486,12 @@ function MainApp() {
                       </Card>
                     )}
 
-                    {generationResult && (
+                    {parsedResult.characters.length === 0 && parsedResult.segments.length === 0 && (
                       <Card className="result-card" variant="borderless">
-                        <div className="card-header">
-                          <Title level={5} className="card-title">
-                            生成结果
-                          </Title>
-                          {generationResult.success && <Tag color="green">成功</Tag>}
-                          {!generationResult.success && <Tag color="red">失败</Tag>}
-                        </div>
-
-                        {generationResult.success ? (
-                          <Row gutter={16}>
-                            {generationResult.images.map((img, idx) => (
-                              <Col key={`gen-img-${idx}`} span={12}>
-                                <Image
-                                  src={img}
-                                  alt={`生成图片 ${idx + 1}`}
-                                  style={{ width: '100%', borderRadius: 8 }}
-                                />
-                                <Button
-                                  type="link"
-                                  icon={<DownloadOutlined />}
-                                  onClick={() => handleSaveImage(img)}
-                                  style={{ marginTop: 8 }}
-                                >
-                                  保存到本地
-                                </Button>
-                              </Col>
-                            ))}
-                          </Row>
-                        ) : (
-                          <Alert
-                            message="生成失败"
-                            description={generationResult.error}
-                            type="error"
-                            showIcon
-                          />
-                        )}
+                        <Empty
+                          description="未检测到角色或分段"
+                          image={Empty.PRESENTED_IMAGE_SIMPLE}
+                        />
                       </Card>
                     )}
                   </div>
@@ -1436,7 +1511,7 @@ function MainApp() {
                 <div style={{ marginBottom: 4 }}>选择要绑定的角色：</div>
                 <Checkbox.Group
                   value={charactersToBind}
-                  onChange={(values) => setCharactersToBind(values as string[])}
+                  onChange={values => setCharactersToBind(values as string[])}
                   style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}
                 >
                   {Array.from(new Set(charactersToBind)).map(charName => (
@@ -1724,6 +1799,33 @@ function MainApp() {
         width={600}
       >
         <div style={{ padding: '8px 0' }}>
+          <Alert
+            message="🌓 主题切换"
+            description={
+              <div style={{ color: '#666' }}>
+                <p>
+                  点击界面右上角的
+                  <Text strong style={{ color: '#6366f1' }}>
+                    主题切换
+                  </Text>
+                  按钮（太阳/月亮图标）可以切换主题：
+                </p>
+                <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                  <li>
+                    <Text style={{ color: '#10b981' }}>亮色主题</Text> - 浅色背景，适合白天使用
+                  </li>
+                  <li>
+                    <Text style={{ color: '#8b5cf6' }}>暗色主题</Text> - 深色背景，减少眼睛疲劳
+                  </li>
+                  <li>
+                    <Text style={{ color: '#f59e0b' }}>跟随系统</Text> - 自动跟随操作系统的主题设置
+                  </li>
+                </ul>
+                <p>主题设置会自动保存，下次打开应用时保持上次的选择。</p>
+              </div>
+            }
+            style={{ marginBottom: 16 }}
+          />
           <Steps
             current={0}
             direction="vertical"

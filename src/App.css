@@ -464,3 +464,288 @@ body {
 .mini-bind-btn {
   font-size: 11px;
 }
+
+.dark {
+  color-scheme: dark;
+}
+
+.dark :root {
+  color: #f1f5f9;
+  background-color: #0f172a;
+}
+
+.dark body {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+}
+
+.dark .header-bg {
+  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 100%);
+}
+
+.dark .prompt-card {
+  background: #1e293b;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dark .result-card {
+  background: #1e293b;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dark .card-title {
+  color: #f1f5f9 !important;
+}
+
+.dark .ant-card {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.dark .ant-input,
+.dark .ant-input-affix-wrapper {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f1f5f9;
+}
+
+::placeholder {
+  color: #64748b;
+}
+
+.dark .ant.dark .ant-input-select-selector {
+  background: #0f172a !important;
+  border-color: #334155 !important;
+}
+
+.dark .ant-select-dropdown {
+  background: #1e293b;
+}
+
+.dark .ant-modal-content {
+  background: #1e293b;
+}
+
+.dark .ant-modal-header {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.dark .ant-modal-title {
+  color: #f1f5f9;
+}
+
+.dark .ant-collapse {
+  background: transparent;
+  border: none;
+}
+
+.dark .ant-collapse-item {
+  border-color: #334155;
+}
+
+.dark .ant-collapse-header {
+  color: #f1f5f9 !important;
+}
+
+.dark .ant-collapse-content {
+  background: transparent;
+  border-color: #334155;
+}
+
+.dark .ant-collapse-content-box {
+  color: #e2e8f0;
+}
+
+.dark .ant-tag {
+  border-color: #334155;
+}
+
+.dark .ant-btn-default {
+  background: #1e293b;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.dark .ant-btn-default:hover {
+  background: #334155;
+  border-color: #475569;
+  color: #f1f5f9;
+}
+
+.dark .ant-dropdown-menu {
+  background: #1e293b;
+  border: 1px solid #334155;
+}
+
+.dark .ant-dropdown-menu-item {
+  color: #e2e8f0;
+}
+
+.dark .ant-dropdown-menu-item:hover {
+  background: #334155;
+}
+
+.dark .ant-divider {
+  border-color: #334155;
+}
+
+.dark .ant-empty-description {
+  color: #94a3b8;
+}
+
+.dark .ant-spin-text {
+  color: #94a3b8;
+}
+
+.dark .ant-segmented {
+  background: #0f172a;
+}
+
+.dark .ant-segmented-item {
+  color: #94a3b8;
+}
+
+.dark .ant-segmented-item-selected {
+  background: #6366f1;
+  color: white;
+}
+
+.dark .example-tag {
+  background: #334155;
+  border-color: #475569;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.dark .example-tag:hover {
+  background: #475569;
+}
+
+.dark .scene-description {
+  color: #e2e8f0;
+}
+
+.dark .ant-image-mask {
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.dark .ant-image-mask-info {
+  color: white;
+}
+
+.dark .ant-popover-inner {
+  background: #1e293b;
+}
+
+.dark .ant-popover-message {
+  color: #e2e8f0;
+}
+
+.dark .ant-message-notice-content {
+  background: #1e293b;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  color: #e2e8f0;
+}
+
+.dark .ant-table {
+  background: #1e293b;
+}
+
+.dark .ant-table-thead > tr > th {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+
+.dark .ant-table-tbody > tr > td {
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.dark .ant-table-tbody > tr:hover > td {
+  background: #334155;
+}
+
+.dark .ant-pagination-item {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.dark .ant-pagination-item a {
+  color: #e2e8f0;
+}
+
+.dark .ant-pagination-item-active {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+.dark .ant-pagination-item-active a {
+  color: white;
+}
+
+.dark .ant-input-number {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f1f5f9;
+}
+
+.dark .ant-checkbox-inner {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.dark .ant-checkbox-checked .ant-checkbox-inner {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+.dark .ant-radio-wrapper {
+  color: #e2e8f0;
+}
+
+.dark .ant-radio-inner {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.dark .ant-radio-checked .ant-radio-inner {
+  border-color: #6366f1;
+}
+
+.dark .ant-steps-item-title {
+  color: #e2e8f0 !important;
+}
+
+.dark .ant-steps-item-description {
+  color: #94a3b8 !important;
+}
+
+.dark .ant-drawer-content {
+  background: #1e293b;
+}
+
+.dark .ant-drawer-header {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.dark .ant-drawer-title {
+  color: #f1f5f9;
+}
+
+.dark .ant-drawer-close {
+  color: #94a3b8;
+}
+
+.dark .ant-form-item-label > label {
+  color: #e2e8f0;
+}
+
+.dark .ant-switch {
+  background: #475569;
+}
+
+.dark .ant-switch-checked {
+  background: #6366f1;
+}
