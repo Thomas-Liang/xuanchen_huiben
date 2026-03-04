@@ -1,0 +1,260 @@
+/* Ant Design 与 Tailwind CSS 兼容样式 */
+
+/* 修复 Ant Design 组件样式冲突 */
+.ant-btn {
+  font-family:
+    'PingFang SC',
+    'Microsoft YaHei',
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+}
+
+.ant-card {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+.dark .ant-card {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+.ant-card-head {
+  border-bottom-color: var(--color-border);
+}
+
+.dark .ant-card-head {
+  border-bottom-color: var(--color-border);
+}
+
+.ant-card-head-title {
+  color: var(--color-text);
+}
+
+.dark .ant-card-head-title {
+  color: var(--color-text);
+}
+
+/* 输入框样式 */
+.ant-input,
+.ant-input-affix-wrapper {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.dark .ant-input,
+.dark .ant-input-affix-wrapper {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.ant-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+.dark .ant-input::placeholder {
+  color: var(--color-text-secondary);
+}
+
+/* 开关样式 */
+.ant-switch-checked {
+  background: var(--color-primary);
+}
+
+/* 标签样式 */
+.ant-tag {
+  border-radius: 6px;
+}
+
+/* 模态框样式 */
+.ant-modal-content {
+  background: var(--color-surface);
+}
+
+.dark .ant-modal-content {
+  background: var(--color-surface);
+}
+
+.ant-modal-header {
+  background: var(--color-surface);
+  border-bottom-color: var(--color-border);
+}
+
+.dark .ant-modal-header {
+  background: var(--color-surface);
+  border-bottom-color: var(--color-border);
+}
+
+.ant-modal-title {
+  color: var(--color-text);
+}
+
+.dark .ant-modal-title {
+  color: var(--color-text);
+}
+
+/* 下拉菜单 */
+.ant-select-dropdown {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+.dark .ant-select-dropdown {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+}
+
+.ant-select-item {
+  color: var(--color-text);
+}
+
+.dark .ant-select-item {
+  color: var(--color-text);
+}
+
+.ant-select-item-option-active {
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.ant-select-item-option-selected {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+/* Tabs */
+.ant-tabs-tab {
+  color: var(--color-text-secondary);
+}
+
+.dark .ant-tabs-tab {
+  color: var(--color-text-secondary);
+}
+
+.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--color-primary);
+}
+
+.ant-tabs-ink-bar {
+  background: var(--color-primary);
+}
+
+/* Collapse */
+.ant-collapse {
+  background: transparent;
+  border: none;
+}
+
+.ant-collapse-item {
+  border-color: var(--color-border) !important;
+}
+
+.dark .ant-collapse-item {
+  border-color: var(--color-border) !important;
+}
+
+.ant-collapse-header {
+  color: var(--color-text) !important;
+}
+
+.dark .ant-collapse-header {
+  color: var(--color-text) !important;
+}
+
+/* List */
+.ant-list-item {
+  border-color: var(--color-border);
+}
+
+.dark .ant-list-item {
+  border-color: var(--color-border);
+}
+
+/* Empty */
+.ant-empty-description {
+  color: var(--color-text-secondary);
+}
+
+.dark .ant-empty-description {
+  color: var(--color-text-secondary);
+}
+
+/* Spin */
+.ant-spin-dot-item {
+  background-color: var(--color-primary);
+}
+
+/* Alert */
+.ant-alert-info {
+  background: rgba(99, 102, 241, 0.1);
+  border-color: rgba(99, 102, 241, 0.3);
+}
+
+.dark .ant-alert-info {
+  background: rgba(129, 140, 248, 0.1);
+  border-color: rgba(129, 140, 248, 0.3);
+}
+
+/* Divider */
+.ant-divider {
+  border-color: var(--color-border);
+}
+
+.dark .ant-divider {
+  border-color: var(--color-border);
+}
+
+/* Steps */
+.ant-steps-item-finish .ant-steps-item-icon {
+  border-color: var(--color-primary);
+}
+
+.ant-steps-item-process .ant-steps-item-icon {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Checkbox */
+.ant-checkbox-checked .ant-checkbox-inner {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Radio */
+.ant-radio-checked .ant-radio-inner {
+  border-color: var(--color-primary);
+}
+
+.ant-radio-inner::after {
+  background-color: var(--color-primary);
+}
+
+/* Popconfirm */
+.ant-popconfirm-message-title {
+  color: var(--color-text);
+}
+
+.dark .ant-popconfirm-message-title {
+  color: var(--color-text);
+}
+
+/* Tooltip */
+.ant-tooltip-inner {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.dark .ant-tooltip-inner {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* Loading 遮罩 */
+.ant-spin-container::after {
+  background: var(--color-surface);
+}
+
+.dark .ant-spin-container::after {
+  background: var(--color-surface);
+}
