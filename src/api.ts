@@ -269,7 +269,11 @@ export async function saveImageDialog(imageUrl: string): Promise<string | null> 
     const { save } = await import('@tauri-apps/plugin-dialog');
     const { invoke } = await import('@tauri-apps/api/core');
 
+    // Generate default filename
+    const defaultName = `image_${Date.now()}.png`;
+
     const filePath = await save({
+      defaultPath: defaultName,
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
     });
 
