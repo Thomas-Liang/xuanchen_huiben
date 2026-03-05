@@ -1,11 +1,12 @@
 mod api;
 mod commands;
+mod storage;
 
 use api::create_api_router;
 use commands::character_binding::{
     add_tag_to_reference, bind_character_reference, delete_reference_image, get_all_bindings,
     get_all_tags, get_bindings_for_prompt, get_character_binding, get_references_by_type,
-    get_reference_images, load_bindings_from_file, load_tags_from_file, remove_tag_from_reference,
+    get_reference_images, load_bindings_from_file, remove_tag_from_reference,
     save_reference_image, search_reference_images, unbind_character,
 };
 use commands::image_generator::{
@@ -14,6 +15,7 @@ use commands::image_generator::{
     save_api_config, save_generation_config, test_api_connection,
 };
 use commands::prompt_parser::{batch_split_prompt, parse_prompt, test_parse};
+use storage::Storage;
 use std::net::SocketAddr;
 use tauri::{
     image::Image,
@@ -54,8 +56,110 @@ async fn save_image_to_file(image_url: String, file_path: String) -> Result<Stri
     }
 }
 
+// ==================== History Commands ====================
+
+#[tauri::command]
+fn add_history(history: storage::GenerationHistory) -> Result<storage::GenerationHistory, String> {
+    storage::add_history(history)
+}
+
+#[tauri::command]
+fn get_history(page: usize, page_size: usize) -> Result<storage::GenerationHistoryList, String> {
+    storage::get_history(page, page_size)
+}
+
+#[tauri::command]
+fn get_history_by_id(id: String) -> Result<Option<storage::GenerationHistory>, String> {
+    storage::get_history_by_id(&id)
+}
+
+#[tauri::command]
+fn update_history(id: String, history: storage::GenerationHistory) -> Result<storage::GenerationHistory, String> {
+    storage::update_history(&id, history)
+}
+
+#[tauri::command]
+fn delete_history(id: String) -> Result<(), String> {
+    storage::delete_history(&id)
+}
+
+#[tauri::command]
+fn clear_history() -> Result<(), String> {
+    storage::clear_history()
+}
+
+// ==================== Character Binding Commands ====================
+
+#[tauri::command]
+fn add_character_binding(binding: storage::CharacterBindingData) -> Result<storage::CharacterBindingData, String> {
+    storage::add_character_binding(binding)
+}
+
+#[tauri::command]
+fn get_all_character_bindings() -> Result<Vec<storage::CharacterBindingData>, String> {
+    storage::get_all_character_bindings()
+}
+
+#[tauri::command]
+fn get_character_binding_by_id(id: String) -> Result<Option<storage::CharacterBindingData>, String> {
+    storage::get_character_binding_by_id(&id)
+}
+
+#[tauri::command]
+fn update_character_binding(id: String, binding: storage::CharacterBindingData) -> Result<storage::CharacterBindingData, String> {
+    storage::update_character_binding(&id, binding)
+}
+
+#[tauri::command]
+fn delete_character_binding(id: String) -> Result<(), String> {
+    storage::delete_character_binding(&id)
+}
+
+// ==================== Template Commands ====================
+
+#[tauri::command]
+fn add_template(template: storage::CharacterTemplate) -> Result<storage::CharacterTemplate, String> {
+    storage::add_template(template)
+}
+
+#[tauri::command]
+fn get_all_templates() -> Result<Vec<storage::CharacterTemplate>, String> {
+    storage::get_all_templates()
+}
+
+#[tauri::command]
+fn get_template_by_id(id: String) -> Result<Option<storage::CharacterTemplate>, String> {
+    storage::get_template_by_id(&id)
+}
+
+#[tauri::command]
+fn update_template(id: String, template: storage::CharacterTemplate) -> Result<storage::CharacterTemplate, String> {
+    storage::update_template(&id, template)
+}
+
+#[tauri::command]
+fn delete_template(id: String) -> Result<(), String> {
+    storage::delete_template(&id)
+}
+
+// ==================== Settings Commands ====================
+
+#[tauri::command]
+fn get_settings() -> Result<storage::AppSettings, String> {
+    storage::get_settings()
+}
+
+#[tauri::command]
+fn save_settings(settings: storage::AppSettings) -> Result<storage::AppSettings, String> {
+    storage::save_settings(settings)
+}
+
 #[tokio::main]
 pub async fn main() {
+    if let Err(e) = Storage::init() {
+        eprintln!("存储初始化失败: {}", e);
+    }
+    
     let _ = load_bindings_from_file();
     commands::image_generator::load_config_from_file();
     commands::character_binding::load_tags_from_file();
@@ -180,6 +284,28 @@ pub async fn main() {
             load_generation_config,
             get_default_generation_config,
             save_image_to_file,
+            // History CRUD
+            add_history,
+            get_history,
+            get_history_by_id,
+            update_history,
+            delete_history,
+            clear_history,
+            // Character Binding CRUD
+            add_character_binding,
+            get_all_character_bindings,
+            get_character_binding_by_id,
+            update_character_binding,
+            delete_character_binding,
+            // Template CRUD
+            add_template,
+            get_all_templates,
+            get_template_by_id,
+            update_template,
+            delete_template,
+            // Settings CRUD
+            get_settings,
+            save_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

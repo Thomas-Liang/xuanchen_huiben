@@ -375,6 +375,182 @@ impl Storage {
     }
 }
 
+// ==================== History CRUD ====================
+
+pub fn add_history(history: GenerationHistory) -> Result<GenerationHistory, String> {
+    let mut db = Storage::load_database()?;
+    db.history.items.insert(0, history.clone());
+    db.history.total = db.history.items.len();
+    Storage::save_database(&db)?;
+    Ok(history)
+}
+
+pub fn get_history(page: usize, page_size: usize) -> Result<GenerationHistoryList, String> {
+    let db = Storage::load_database()?;
+    let start = page * page_size;
+    let end = (start + page_size).min(db.history.items.len());
+
+    let items = if start < db.history.items.len() {
+        db.history.items[start..end].to_vec()
+    } else {
+        vec![]
+    };
+
+    Ok(GenerationHistoryList {
+        total: db.history.total,
+        items,
+    })
+}
+
+pub fn get_history_by_id(id: &str) -> Result<Option<GenerationHistory>, String> {
+    let db = Storage::load_database()?;
+    Ok(db.history.items.iter().find(|h| h.id == id).cloned())
+}
+
+pub fn update_history(id: &str, history: GenerationHistory) -> Result<GenerationHistory, String> {
+    let mut db = Storage::load_database()?;
+    if let Some(idx) = db.history.items.iter().position(|h| h.id == id) {
+        db.history.items[idx] = history.clone();
+        Storage::save_database(&db)?;
+        Ok(history)
+    } else {
+        Err("历史记录不存在".to_string())
+    }
+}
+
+pub fn delete_history(id: &str) -> Result<(), String> {
+    let mut db = Storage::load_database()?;
+    let original_len = db.history.items.len();
+    db.history.items.retain(|h| h.id != id);
+    if db.history.items.len() < original_len {
+        db.history.total = db.history.items.len();
+        Storage::save_database(&db)?;
+        Ok(())
+    } else {
+        Err("历史记录不存在".to_string())
+    }
+}
+
+pub fn clear_history() -> Result<(), String> {
+    let mut db = Storage::load_database()?;
+    db.history.items.clear();
+    db.history.total = 0;
+    Storage::save_database(&db)?;
+    Ok(())
+}
+
+// ==================== Character Binding CRUD ====================
+
+pub fn add_character_binding(
+    binding: CharacterBindingData,
+) -> Result<CharacterBindingData, String> {
+    let mut db = Storage::load_database()?;
+    db.character_bindings.push(binding.clone());
+    Storage::save_database(&db)?;
+    Ok(binding)
+}
+
+pub fn get_all_character_bindings() -> Result<Vec<CharacterBindingData>, String> {
+    let db = Storage::load_database()?;
+    Ok(db.character_bindings)
+}
+
+pub fn get_character_binding_by_id(id: &str) -> Result<Option<CharacterBindingData>, String> {
+    let db = Storage::load_database()?;
+    Ok(db.character_bindings.iter().find(|b| b.id == id).cloned())
+}
+
+pub fn get_character_binding_by_name(name: &str) -> Result<Option<CharacterBindingData>, String> {
+    let db = Storage::load_database()?;
+    Ok(db
+        .character_bindings
+        .iter()
+        .find(|b| b.character_name == name)
+        .cloned())
+}
+
+pub fn update_character_binding(
+    id: &str,
+    binding: CharacterBindingData,
+) -> Result<CharacterBindingData, String> {
+    let mut db = Storage::load_database()?;
+    if let Some(idx) = db.character_bindings.iter().position(|b| b.id == id) {
+        db.character_bindings[idx] = binding.clone();
+        Storage::save_database(&db)?;
+        Ok(binding)
+    } else {
+        Err("角色绑定不存在".to_string())
+    }
+}
+
+pub fn delete_character_binding(id: &str) -> Result<(), String> {
+    let mut db = Storage::load_database()?;
+    let original_len = db.character_bindings.len();
+    db.character_bindings.retain(|b| b.id != id);
+    if db.character_bindings.len() < original_len {
+        Storage::save_database(&db)?;
+        Ok(())
+    } else {
+        Err("角色绑定不存在".to_string())
+    }
+}
+
+// ==================== Template CRUD ====================
+
+pub fn add_template(template: CharacterTemplate) -> Result<CharacterTemplate, String> {
+    let mut db = Storage::load_database()?;
+    db.templates.push(template.clone());
+    Storage::save_database(&db)?;
+    Ok(template)
+}
+
+pub fn get_all_templates() -> Result<Vec<CharacterTemplate>, String> {
+    let db = Storage::load_database()?;
+    Ok(db.templates)
+}
+
+pub fn get_template_by_id(id: &str) -> Result<Option<CharacterTemplate>, String> {
+    let db = Storage::load_database()?;
+    Ok(db.templates.iter().find(|t| t.id == id).cloned())
+}
+
+pub fn update_template(id: &str, template: CharacterTemplate) -> Result<CharacterTemplate, String> {
+    let mut db = Storage::load_database()?;
+    if let Some(idx) = db.templates.iter().position(|t| t.id == id) {
+        db.templates[idx] = template.clone();
+        Storage::save_database(&db)?;
+        Ok(template)
+    } else {
+        Err("模板不存在".to_string())
+    }
+}
+
+pub fn delete_template(id: &str) -> Result<(), String> {
+    let mut db = Storage::load_database()?;
+    let original_len = db.templates.len();
+    db.templates.retain(|t| t.id != id);
+    if db.templates.len() < original_len {
+        Storage::save_database(&db)?;
+        Ok(())
+    } else {
+        Err("模板不存在".to_string())
+    }
+}
+
+// ==================== Settings CRUD ====================
+
+pub fn get_settings() -> Result<AppSettings, String> {
+    let db = Storage::load_database()?;
+    Ok(db.settings)
+}
+
+pub fn save_settings(settings: AppSettings) -> Result<AppSettings, String> {
+    let mut db = Storage::load_database()?;
+    db.settings = settings.clone();
+    Storage::save_database(&db)?;
+    Ok(settings)
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StorageInfo {
     pub total_size: u64,
