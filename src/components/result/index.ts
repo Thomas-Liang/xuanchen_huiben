@@ -1,0 +1,1 @@
+export { ImageResult } from './ImageResult';

@@ -61,16 +61,17 @@
 
 ## 🛠️ 技术栈
 
-| 技术         | 描述           |
-| ------------ | -------------- |
-| React 19     | 前端框架       |
-| TypeScript   | 类型安全       |
-| Vite         | 构建工具       |
-| Tauri 2.x    | 桌面应用框架   |
-| Ant Design 6 | UI 组件库      |
-| Tailwind CSS | 样式框架       |
-| Axum         | Rust HTTP 服务 |
-| Zustand      | 状态管理       |
+| 技术          | 描述           |
+| ------------- | -------------- |
+| React 19      | 前端框架       |
+| TypeScript    | 类型安全       |
+| Vite          | 构建工具       |
+| Tauri 2.x     | 桌面应用框架   |
+| Ant Design 6  | UI 组件库      |
+| Tailwind CSS  | 样式框架       |
+| Framer Motion | 动画库         |
+| Axum          | Rust HTTP 服务 |
+| Zustand       | 状态管理       |
 
 ## 🚀 快速开始
 
@@ -197,7 +198,16 @@ xuanchen_huiben/
 │   ├── api.ts               # API 调用
 │   ├── App.tsx              # 主应用组件
 │   ├── types/               # TypeScript 类型
-│   └── store/               # 状态管理
+│   ├── store/               # 状态管理
+│   ├── components/          # 组件目录
+│   │   ├── prompts/         # 提示词输入组件
+│   │   ├── character/       # 角色绑定组件
+│   │   ├── config/          # 配置面板组件
+│   │   ├── library/         # 参考图库组件
+│   │   ├── result/          # 图片结果组件
+│   │   └── Toolbar.tsx      # 工具栏组件
+│   ├── theme/               # 主题管理
+│   └── index.css            # 全局样式 (Tailwind)
 ├── src-tauri/               # Rust 后端
 │   ├── src/
 │   │   ├── api.rs           # HTTP API
@@ -207,6 +217,7 @@ xuanchen_huiben/
 │   │   │   └── prompt_parser.rs
 │   │   └── main.rs          # 入口
 │   └── Cargo.toml
+├── tailwind.config.js       # Tailwind 配置
 ├── vite.config.ts           # Vite 配置
 └── README.md
 ```
