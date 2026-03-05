@@ -78,12 +78,14 @@ pub struct ReferenceImageQueryHttp {
 pub async fn api_get_reference_images_handler(
     axum::extract::Query(query): axum::extract::Query<ReferenceImageQueryHttp>
 ) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    println!("[API] get_reference_images called with query: {:?}", query);
     let query = ReferenceImageQuery {
         image_type: query.image_type,
         search: query.search,
         tags: query.tags.map(|t| t.split(',').map(|s| s.to_string()).collect()),
     };
     let images = get_reference_images(Some(query));
+    println!("[API] get_reference_images returning {} images", images.len());
     Ok(axum::Json(images))
 }
 
@@ -101,6 +103,7 @@ pub async fn api_search_reference_images_handler(
 
 pub async fn api_get_all_tags_handler() -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
     let tags = get_all_tags();
+    println!("[API] get_all_tags called, returning {} tags", tags.len());
     Ok(axum::Json(tags))
 }
 

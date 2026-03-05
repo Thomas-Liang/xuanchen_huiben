@@ -51,11 +51,11 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
     setLoading(true);
     try {
       console.log(
-        '[HistoryList] Loading history, isTauri:',
+        '[HistoryList] Checking isTauri:',
         typeof window !== 'undefined' && '__TAURI__' in window
       );
       const result = await getHistory(page - 1, pageSize);
-      console.log('[HistoryList] Loaded:', result);
+      console.log('[HistoryList] Result:', result);
       setHistory(result.items);
       setTotal(result.total);
       setCurrentPage(page);
@@ -170,9 +170,14 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
 
   return (
     <Modal
-      title={
-        <div className="flex items-center justify-between">
-          <span>生成历史记录</span>
+      title="生成历史记录"
+      open={visible}
+      onCancel={onClose}
+      footer={[
+        <div
+          key="footer"
+          style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}
+        >
           <Popconfirm
             title="确认清空"
             description="确定要清空所有历史记录吗？此操作不可恢复。"
@@ -184,33 +189,27 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
               清空全部
             </Button>
           </Popconfirm>
-        </div>
-      }
-      open={visible}
-      onCancel={onClose}
-      footer={null}
+          <Pagination
+            current={currentPage}
+            pageSize={pageSize}
+            total={total}
+            onChange={loadHistory}
+            showSizeChanger={false}
+          />
+        </div>,
+      ]}
       width={1000}
     >
       <Spin spinning={loading}>
         {history.length > 0 ? (
-          <>
-            <Table
-              columns={columns}
-              dataSource={history}
-              rowKey="id"
-              pagination={false}
-              size="small"
-            />
-            <div className="mt-4 flex justify-end">
-              <Pagination
-                current={currentPage}
-                pageSize={pageSize}
-                total={total}
-                onChange={loadHistory}
-                showSizeChanger={false}
-              />
-            </div>
-          </>
+          <Table
+            columns={columns}
+            dataSource={history}
+            rowKey="id"
+            pagination={false}
+            size="small"
+            scroll={{ x: 'max-content' }}
+          />
         ) : (
           <Empty description="暂无历史记录" />
         )}
@@ -263,16 +262,15 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
             </Descriptions>
 
             {selectedHistory.images && selectedHistory.images.length > 0 && (
-              <div className="mt-4">
+              <div style={{ marginTop: 16 }}>
                 <Text strong>生成的图片：</Text>
-                <Row gutter={[16, 16]} className="mt-2">
+                <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
                   {selectedHistory.images.map((img, idx) => (
                     <Col key={idx} span={12}>
                       <Image
                         src={img}
                         alt={`生成图片 ${idx + 1}`}
-                        className="w-full rounded"
-                        style={{ borderRadius: 8 }}
+                        style={{ width: '100%', borderRadius: 8 }}
                       />
                     </Col>
                   ))}

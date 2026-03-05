@@ -12,7 +12,10 @@ import type {
 const API_BASE = '';
 
 function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI__' in (window as any);
+  // For debugging - always use Tauri commands in desktop app
+  const result = typeof window !== 'undefined' && '__TAURI__' in (window as any);
+  console.log('[api.ts] isTauri check:', result, 'window.__TAURI__:', (window as any).__TAURI__);
+  return true; // Always use Tauri commands for now
 }
 
 async function fetchApi<T>(endpoint: string, body?: unknown): Promise<T> {
@@ -142,7 +145,25 @@ export async function unbindCharacter(characterName: string): Promise<boolean> {
 export async function generateImage(params: ImageGenerationParams): Promise<ImageGenerationResult> {
   if (isTauri()) {
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<ImageGenerationResult>('generate_image', { params });
+    const rustParams = {
+      model: params.model,
+      prompt: params.prompt,
+      character_bindings: (params.characterBindings || []).map(b => ({
+        character_name: b.character_name,
+        reference_image_path: b.reference_image_path,
+        image_type: b.image_type,
+      })),
+      width: params.width,
+      height: params.height,
+      count: params.count,
+      quality: params.quality,
+      size: params.size,
+      sequential_image_generation: params.sequential_image_generation,
+      response_format: params.response_format,
+      watermark: params.watermark,
+      images: params.images,
+    };
+    return invoke<ImageGenerationResult>('generate_image', { params: rustParams });
   }
 
   const body = {
@@ -187,7 +208,14 @@ export async function saveApiConfig(config: APIConfig): Promise<boolean> {
 export async function loadApiConfig(): Promise<APIConfig> {
   if (isTauri()) {
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke<APIConfig>('load_api_config');
+    const config = await invoke<{
+      seedream: { base_url: string; api_key: string };
+      banana_pro: { base_url: string; api_key: string };
+    }>('load_api_config');
+    return {
+      seedream: { baseUrl: config.seedream.base_url, apiKey: config.seedream.api_key },
+      bananaPro: { baseUrl: config.banana_pro.base_url, apiKey: config.banana_pro.api_key },
+    };
   }
   const result = await fetchApi<{
     seedream: { baseUrl: string; apiKey: string };
@@ -491,9 +519,7 @@ export async function getHistory(
   return fetchApi('/api/history/list', { page, pageSize });
 }
 
-export async function getHistoryById(
-  id: string
-): Promise<{
+export async function getHistoryById(id: string): Promise<{
   id: string;
   prompt: string;
   model: string;

@@ -172,7 +172,11 @@ function MainApp() {
       const config = await api.loadApiConfig();
       setApiConfig(config);
     } catch (error) {
-      console.error('加载API配置失败:', error);
+      console.error('加载API配置失败, 使用默认配置:', error);
+      setApiConfig({
+        seedream: { baseUrl: 'https://eggfans.com', apiKey: '' },
+        bananaPro: { baseUrl: 'https://api.zhongzhuan.chat', apiKey: '' },
+      });
     }
   };
 
