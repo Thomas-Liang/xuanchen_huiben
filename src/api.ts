@@ -436,3 +436,93 @@ export async function deleteReferenceImage(characterName: string): Promise<boole
   }
   return fetchApi<boolean>('/api/reference-images/delete', { characterName });
 }
+
+// ==================== History API ====================
+
+export async function addHistory(history: {
+  id: string;
+  prompt: string;
+  model: string;
+  params: Record<string, unknown>;
+  images: string[];
+  characters: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}): Promise<{
+  id: string;
+  prompt: string;
+  model: string;
+  params: Record<string, unknown>;
+  images: string[];
+  characters: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('add_history', { history });
+  }
+  return fetchApi('/api/history/add', history);
+}
+
+export async function getHistory(
+  page: number = 0,
+  pageSize: number = 20
+): Promise<{
+  total: number;
+  items: {
+    id: string;
+    prompt: string;
+    model: string;
+    params: Record<string, unknown>;
+    images: string[];
+    characters: string[];
+    status: string;
+    created_at: string;
+    updated_at: string;
+  }[];
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_history', { page, pageSize });
+  }
+  return fetchApi('/api/history/list', { page, pageSize });
+}
+
+export async function getHistoryById(
+  id: string
+): Promise<{
+  id: string;
+  prompt: string;
+  model: string;
+  params: Record<string, unknown>;
+  images: string[];
+  characters: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+} | null> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_history_by_id', { id });
+  }
+  return fetchApi('/api/history/get', { id });
+}
+
+export async function deleteHistory(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_history', { id });
+  }
+  return fetchApi('/api/history/delete', { id });
+}
+
+export async function clearHistory(): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('clear_history');
+  }
+  return fetchApi('/api/history/clear', {});
+}

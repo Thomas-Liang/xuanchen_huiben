@@ -62,6 +62,7 @@ import type { ReferenceImageQuery } from './api';
 import { useTheme } from './theme';
 import { SlideUp, FadeIn, ScaleIn } from './theme/animations';
 import { Toolbar } from './components/Toolbar';
+import { HistoryList } from './components/history';
 import './App.css';
 
 const { Header, Content, Sider } = Layout;
@@ -129,6 +130,7 @@ function MainApp() {
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [helpModalVisible, setHelpModalVisible] = useState(false);
   const [referenceModalVisible, setReferenceModalVisible] = useState(false);
+  const [historyModalVisible, setHistoryModalVisible] = useState(false);
   const [referenceImages, setReferenceImages] = useState<CharacterBinding[]>([]);
   const [referenceLoading, setReferenceLoading] = useState(false);
   const [referenceFilterType, setReferenceFilterType] = useState<string>('');
@@ -359,6 +361,30 @@ function MainApp() {
 
         if (!batchMode) {
           setGenerationResult(result);
+        }
+
+        // 保存到历史记录
+        if (result.success) {
+          try {
+            const { addHistory } = await import('./api');
+            const prompt =
+              batchMode && batchSplitResult
+                ? batchSplitResult.segments[idx]?.content || params.prompt
+                : params.prompt;
+            await addHistory({
+              id: `gen_${Date.now()}`,
+              prompt: prompt,
+              model: params.model,
+              params: params as any,
+              images: result.images,
+              characters: parsedResult?.characters?.map(c => c.name) || [],
+              status: result.success ? 'completed' : 'failed',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          } catch (e) {
+            console.error('保存历史记录失败:', e);
+          }
         }
 
         setBatchProgress((prev: any) => {
@@ -685,6 +711,9 @@ function MainApp() {
     setCurrentPage(page);
     if (page === 'gallery') {
       openReferenceModal();
+    }
+    if (page === 'history') {
+      setHistoryModalVisible(true);
     }
   };
 
@@ -2282,6 +2311,8 @@ function MainApp() {
           </Modal>
         </div>
       </Modal>
+
+      <HistoryList visible={historyModalVisible} onClose={() => setHistoryModalVisible(false)} />
     </ConfigProvider>
   );
 }

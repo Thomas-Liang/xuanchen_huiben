@@ -132,3 +132,20 @@ export interface BatchGenerateProgress {
     result?: ImageGenerationResult;
   }[];
 }
+
+export interface GenerationHistory {
+  id: string;
+  prompt: string;
+  model: string;
+  params: Record<string, unknown>;
+  images: string[];
+  characters: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GenerationHistoryList {
+  total: number;
+  items: GenerationHistory[];
+}
