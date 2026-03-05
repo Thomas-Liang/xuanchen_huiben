@@ -363,28 +363,39 @@ function MainApp() {
           setGenerationResult(result);
         }
 
-        // 保存到历史记录
-        if (result.success) {
-          try {
-            const { addHistory } = await import('./api');
-            const prompt =
-              batchMode && batchSplitResult
-                ? batchSplitResult.segments[idx]?.content || params.prompt
-                : params.prompt;
-            await addHistory({
-              id: `gen_${Date.now()}`,
-              prompt: prompt,
-              model: params.model,
-              params: params as any,
-              images: result.images,
-              characters: parsedResult?.characters?.map(c => c.name) || [],
-              status: result.success ? 'completed' : 'failed',
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-          } catch (e) {
-            console.error('保存历史记录失败:', e);
-          }
+        console.log(
+          '[生成结果]',
+          result.success ? '成功' : '失败',
+          result.images?.length,
+          '张图片'
+        );
+
+        // 保存到历史记录（无论成功失败都保存）
+        try {
+          const { addHistory } = await import('./api');
+          const prompt =
+            batchMode && batchSplitResult
+              ? batchSplitResult.segments[idx]?.content || params.prompt
+              : params.prompt;
+          console.log('[保存历史记录]', {
+            prompt,
+            model: params.model,
+            imagesCount: result.images?.length,
+          });
+          await addHistory({
+            id: `gen_${Date.now()}`,
+            prompt: prompt,
+            model: params.model,
+            params: params as any,
+            images: result.images || [],
+            characters: parsedResult?.characters?.map(c => c.name) || [],
+            status: result.success ? 'completed' : 'failed',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          console.log('[历史记录保存成功]');
+        } catch (e) {
+          console.error('[保存历史记录失败]:', e);
         }
 
         setBatchProgress((prev: any) => {
