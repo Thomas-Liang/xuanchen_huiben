@@ -264,15 +264,23 @@ export async function saveImageToFile(imageUrl: string, filePath: string): Promi
 }
 
 export async function saveImageDialog(imageUrl: string): Promise<string | null> {
-  if (isTauri()) {
+  // Always try Tauri dialog first
+  try {
     const { save } = await import('@tauri-apps/plugin-dialog');
+    const { invoke } = await import('@tauri-apps/api/core');
+
     const filePath = await save({
       filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
     });
+
     if (filePath) {
-      return saveImageToFile(imageUrl, filePath);
+      await invoke('save_image_to_file', { imageUrl, filePath });
+      return filePath;
     }
     return null;
+  } catch (e) {
+    // If Tauri is not available, use web fallback
+    console.log('Using web fallback for save dialog');
   }
 
   // Web fallback: Use Blob to bypass cross-origin restrictions on 'download' attribute

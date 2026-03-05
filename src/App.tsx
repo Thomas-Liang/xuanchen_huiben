@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { App, theme } from 'antd';
+import '@tauri-apps/api/core';
 import {
   ConfigProvider,
   Layout,
