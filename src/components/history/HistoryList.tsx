@@ -17,6 +17,7 @@ import {
 } from 'antd';
 import { DeleteOutlined, EyeOutlined, ClearOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import { getHistory, deleteHistory, clearHistory } from '../../api';
 
 const { Text } = Typography;
 
@@ -49,8 +50,12 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
   const loadHistory = async (page: number = 1) => {
     setLoading(true);
     try {
-      const { getHistory } = await import('../../api');
+      console.log(
+        '[HistoryList] Loading history, isTauri:',
+        typeof window !== 'undefined' && '__TAURI__' in window
+      );
       const result = await getHistory(page - 1, pageSize);
+      console.log('[HistoryList] Loaded:', result);
       setHistory(result.items);
       setTotal(result.total);
       setCurrentPage(page);
@@ -69,7 +74,6 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
 
   const handleDelete = async (id: string) => {
     try {
-      const { deleteHistory } = await import('../../api');
       await deleteHistory(id);
       loadHistory(currentPage);
     } catch (error) {
@@ -79,7 +83,6 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
 
   const handleClear = async () => {
     try {
-      const { clearHistory } = await import('../../api');
       await clearHistory();
       loadHistory();
     } catch (error) {
