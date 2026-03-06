@@ -32,7 +32,7 @@ pub fn get_current_timestamp() -> String {
 }
 
 pub fn get_current_datetime() -> String {
-    Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    Utc::now().to_rfc3339()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,21 +385,86 @@ pub fn add_history(history: GenerationHistory) -> Result<GenerationHistory, Stri
     Ok(history)
 }
 
-pub fn get_history(page: usize, page_size: usize) -> Result<GenerationHistoryList, String> {
-    let db = Storage::load_database()?;
-    let start = page * page_size;
-    let end = (start + page_size).min(db.history.items.len());
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct HistoryFilter {
+    pub model: Option<String>,
+    pub prompt_keyword: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+}
 
-    let items = if start < db.history.items.len() {
-        db.history.items[start..end].to_vec()
+pub fn get_history(
+    page: usize,
+    page_size: usize,
+    filter: Option<HistoryFilter>,
+) -> Result<GenerationHistoryList, String> {
+    let db = Storage::load_database()?;
+
+    let mut items = db.history.items.clone();
+
+    if let Some(f) = filter {
+        if let Some(model) = f.model {
+            if !model.is_empty() {
+                items.retain(|h| h.model == model);
+            }
+        }
+
+        if let Some(keyword) = f.prompt_keyword {
+            if !keyword.is_empty() {
+                items.retain(|h| h.prompt.to_lowercase().contains(&keyword.to_lowercase()));
+            }
+        }
+
+        if let Some(start) = f.start_date {
+            if !start.is_empty() {
+                if let Ok(start_dt) = chrono::DateTime::parse_from_rfc3339(&start) {
+                    items.retain(|h| {
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&h.created_at) {
+                            dt >= start_dt
+                        } else {
+                            // Fallback for old format
+                            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&h.created_at, "%Y-%m-%d %H:%M:%S") {
+                                dt.and_utc() >= start_dt.with_timezone(&chrono::Utc)
+                            } else {
+                                false
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        if let Some(end) = f.end_date {
+            if !end.is_empty() {
+                if let Ok(end_dt) = chrono::DateTime::parse_from_rfc3339(&end) {
+                    items.retain(|h| {
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&h.created_at) {
+                            dt <= end_dt
+                        } else {
+                            // Fallback for old format
+                            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&h.created_at, "%Y-%m-%d %H:%M:%S") {
+                                dt.and_utc() <= end_dt.with_timezone(&chrono::Utc)
+                            } else {
+                                false
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    let total = items.len();
+    let start = page * page_size;
+    let end = (start + page_size).min(items.len());
+
+    let items = if start < items.len() {
+        items[start..end].to_vec()
     } else {
         vec![]
     };
 
-    Ok(GenerationHistoryList {
-        total: db.history.total,
-        items,
-    })
+    Ok(GenerationHistoryList { total, items })
 }
 
 pub fn get_history_by_id(id: &str) -> Result<Option<GenerationHistory>, String> {

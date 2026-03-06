@@ -722,6 +722,33 @@ function MainApp() {
 
   const themeConfig = useMemo(() => getThemeConfig(resolvedTheme === 'dark'), [resolvedTheme]);
 
+  const handleApplyHistoryParams = (params: any) => {
+    if (!params) return;
+
+    if (params.prompt) setPrompt(params.prompt);
+    if (params.model) setSelectedModel(params.model as 'seedream' | 'banana_pro');
+    if (params.quality) setImageQuality(params.quality as 'standard' | 'high' | 'ultra');
+    if (params.watermark !== undefined) setWatermark(params.watermark.toString());
+
+    if (params.model === 'seedream' && params.width && params.height) {
+      setSeedreamSize(`${params.width}x${params.height}`);
+    } else if (params.model === 'banana_pro' && params.size) {
+      setBananaResolution(params.size);
+    }
+
+    // Set image size ratio if possible
+    if (params.width && params.height) {
+      const w = params.width;
+      const h = params.height;
+      if (w === h) setImageSize({ width: 1, height: 1 });
+      else if (w > h) setImageSize({ width: 16, height: 9 });
+      else setImageSize({ width: 9, height: 16 });
+    }
+
+    setCurrentPage('workspace');
+    message.success('已应用历史记录参数');
+  };
+
   const handleNavigate = (page: string) => {
     setCurrentPage(page);
     if (page === 'gallery') {
@@ -2327,7 +2354,11 @@ function MainApp() {
         </div>
       </Modal>
 
-      <HistoryList visible={historyModalVisible} onClose={() => setHistoryModalVisible(false)} />
+      <HistoryList
+        visible={historyModalVisible}
+        onClose={() => setHistoryModalVisible(false)}
+        onApplyParams={handleApplyHistoryParams}
+      />
     </ConfigProvider>
   );
 }

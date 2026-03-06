@@ -64,8 +64,21 @@ fn add_history(history: storage::GenerationHistory) -> Result<storage::Generatio
 }
 
 #[tauri::command]
-fn get_history(page: usize, page_size: usize) -> Result<storage::GenerationHistoryList, String> {
-    storage::get_history(page, page_size)
+fn get_history(
+    page: usize, 
+    page_size: usize,
+    model: Option<String>,
+    prompt_keyword: Option<String>,
+    start_date: Option<String>,
+    end_date: Option<String>,
+) -> Result<storage::GenerationHistoryList, String> {
+    let filter = storage::HistoryFilter {
+        model,
+        prompt_keyword,
+        start_date,
+        end_date,
+    };
+    storage::get_history(page, page_size, Some(filter))
 }
 
 #[tauri::command]

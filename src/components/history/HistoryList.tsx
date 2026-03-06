@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Table,
   Button,
@@ -14,12 +14,19 @@ import {
   Row,
   Col,
   Descriptions,
+  Input,
+  Select,
+  DatePicker,
+  Radio,
 } from 'antd';
-import { DeleteOutlined, EyeOutlined, ClearOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EyeOutlined, ClearOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getHistory, deleteHistory, clearHistory } from '../../api';
+import dayjs from 'dayjs';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const { Text } = Typography;
+const { RangePicker } = DatePicker;
 
 interface GenerationHistory {
   id: string;
@@ -36,9 +43,12 @@ interface GenerationHistory {
 interface HistoryListProps {
   visible: boolean;
   onClose: () => void;
+  onApplyParams?: (params: any) => void;
 }
 
-export function HistoryList({ visible, onClose }: HistoryListProps) {
+type QuickFilter = 'all' | 'today' | 'week' | 'month';
+
+export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProps) {
   const [history, setHistory] = useState<GenerationHistory[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -47,15 +57,50 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState<GenerationHistory | null>(null);
 
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [filterModel, setFilterModel] = useState<string | undefined>();
+  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([
+    null,
+    null,
+  ]);
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+
+  const getDateRange = (filter: QuickFilter): [string, string] | null => {
+    const now = dayjs();
+    switch (filter) {
+      case 'today':
+        return [now.startOf('day').toISOString(), now.endOf('day').toISOString()];
+      case 'week':
+        return [now.startOf('week').toISOString(), now.endOf('week').toISOString()];
+      case 'month':
+        return [now.startOf('month').toISOString(), now.endOf('month').toISOString()];
+      default:
+        return null;
+    }
+  };
+
+  const [debouncedSearchKeyword, setDebouncedSearchKeyword] = useState('');
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchKeyword(searchKeyword);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchKeyword]);
+
   const loadHistory = async (page: number = 1) => {
     setLoading(true);
     try {
-      console.log(
-        '[HistoryList] Checking isTauri:',
-        typeof window !== 'undefined' && '__TAURI__' in window
-      );
-      const result = await getHistory(page - 1, pageSize);
-      console.log('[HistoryList] Result:', result);
+      const range = getDateRange(quickFilter);
+      const startDate = range ? range[0] : dateRange[0]?.toISOString() || undefined;
+      const endDate = range ? range[1] : dateRange[1]?.toISOString() || undefined;
+
+      const result = await getHistory(page - 1, pageSize, {
+        model: filterModel,
+        promptKeyword: debouncedSearchKeyword || undefined,
+        startDate,
+        endDate,
+      });
       setHistory(result.items);
       setTotal(result.total);
       setCurrentPage(page);
@@ -71,6 +116,25 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
       loadHistory();
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (visible) {
+      setCurrentPage(1);
+      loadHistory(1);
+    }
+  }, [debouncedSearchKeyword, filterModel, dateRange, quickFilter]);
+
+  const groupedHistory = useMemo(() => {
+    const groups: Record<string, GenerationHistory[]> = {};
+    history.forEach(item => {
+      const date = dayjs(item.created_at).format('YYYY-MM-DD');
+      if (!groups[date]) {
+        groups[date] = [];
+      }
+      groups[date].push(item);
+    });
+    return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [history]);
 
   const handleDelete = async (id: string) => {
     try {
@@ -93,6 +157,27 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
   const handleViewDetail = (record: GenerationHistory) => {
     setSelectedHistory(record);
     setDetailVisible(true);
+  };
+
+  const handleQuickFilterChange = (value: QuickFilter) => {
+    setQuickFilter(value);
+    if (value !== 'all') {
+      setDateRange([null, null]);
+    }
+  };
+
+  const handleDateRangeChange = (dates: any) => {
+    setDateRange(dates || [null, null]);
+    if (dates) {
+      setQuickFilter('all');
+    }
+  };
+
+  const handleApplyParams = (record: GenerationHistory) => {
+    if (onApplyParams) {
+      onApplyParams(record.params);
+      onClose();
+    }
   };
 
   const columns: ColumnsType<GenerationHistory> = [
@@ -163,6 +248,11 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
               删除
             </Button>
           </Popconfirm>
+          {onApplyParams && (
+            <Button type="link" size="small" onClick={() => handleApplyParams(record)}>
+              使用参数
+            </Button>
+          )}
         </Space>
       ),
     },
@@ -198,20 +288,137 @@ export function HistoryList({ visible, onClose }: HistoryListProps) {
           />
         </div>,
       ]}
-      width={1000}
+      width={1100}
     >
+      <div style={{ marginBottom: 16 }}>
+        <Row gutter={[16, 16]}>
+          <Col xs={24} sm={12} md={5}>
+            <Input
+              placeholder="搜索提示词..."
+              prefix={<SearchOutlined />}
+              value={searchKeyword}
+              onChange={e => setSearchKeyword(e.target.value)}
+              allowClear
+            />
+          </Col>
+          <Col xs={24} sm={12} md={4}>
+            <Select
+              placeholder="选择模型"
+              value={filterModel}
+              onChange={setFilterModel}
+              allowClear
+              style={{ width: '100%' }}
+              options={[
+                { value: 'seedream', label: 'Seedream' },
+                { value: 'banana_pro', label: 'Banana Pro' },
+              ]}
+            />
+          </Col>
+          <Col xs={24} sm={12} md={5}>
+            <RangePicker
+              value={dateRange}
+              onChange={handleDateRangeChange}
+              style={{ width: '100%' }}
+            />
+          </Col>
+          <Col xs={24} sm={12} md={6}>
+            <Radio.Group
+              value={quickFilter}
+              onChange={e => handleQuickFilterChange(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="all">全部</Radio.Button>
+              <Radio.Button value="today">今天</Radio.Button>
+              <Radio.Button value="week">本周</Radio.Button>
+              <Radio.Button value="month">本月</Radio.Button>
+            </Radio.Group>
+          </Col>
+          <Col xs={24} sm={12} md={4}>
+            <Space>
+              <Button onClick={() => loadHistory(1)} icon={<SearchOutlined />} type="primary">
+                筛选
+              </Button>
+              <Button
+                onClick={() => {
+                  setSearchKeyword('');
+                  setFilterModel(undefined);
+                  setDateRange([null, null]);
+                  setQuickFilter('all');
+                }}
+              >
+                重置
+              </Button>
+            </Space>
+          </Col>
+        </Row>
+      </div>
+
       <Spin spinning={loading}>
         {history.length > 0 ? (
-          <Table
-            columns={columns}
-            dataSource={history}
-            rowKey="id"
-            pagination={false}
-            size="small"
-            scroll={{ x: 'max-content' }}
-          />
+          <AnimatePresence mode="popLayout">
+            {groupedHistory.map(([date, items]) => (
+              <motion.div
+                key={date}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.3 }}
+                style={{
+                  marginBottom: 24,
+                  padding: 16,
+                  backgroundColor: 'rgba(255, 255, 255, 0.02)',
+                  borderRadius: 12,
+                  border: '1px solid rgba(0, 0, 0, 0.05)',
+                }}
+              >
+                <div
+                  style={{
+                    marginBottom: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <Space>
+                    <div
+                      style={{
+                        width: 4,
+                        height: 16,
+                        backgroundColor: '#6366f1',
+                        borderRadius: 2,
+                      }}
+                    />
+                    <Text strong style={{ fontSize: 16 }}>
+                      {dayjs(date).isSame(dayjs(), 'day')
+                        ? '今天'
+                        : dayjs(date).isSame(dayjs().subtract(1, 'day'), 'day')
+                          ? '昨天'
+                          : dayjs(date).format('YYYY年MM月DD日')}
+                    </Text>
+                    <Tag color="default" bordered={false} style={{ borderRadius: 10 }}>
+                      {items.length} 条记录
+                    </Tag>
+                  </Space>
+                </div>
+                <Table
+                  columns={columns}
+                  dataSource={items}
+                  rowKey="id"
+                  pagination={false}
+                  size="small"
+                  scroll={{ x: 'max-content' }}
+                  className="history-table"
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
         ) : (
-          <Empty description="暂无历史记录" />
+          <Empty
+            image={Empty.PRESENTED_IMAGE_SIMPLE}
+            description={<Text type="secondary">未找到相关历史记录</Text>}
+            style={{ margin: '64px 0' }}
+          />
         )}
       </Spin>
 

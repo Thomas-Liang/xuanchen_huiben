@@ -14,6 +14,8 @@ use crate::commands::prompt_parser::parse_prompt_internal;
 use crate::commands::prompt_parser::ParsedPrompt;
 use crate::commands::prompt_parser::{batch_split_prompt, BatchSplitResult};
 use crate::commands::image_generator::GenerationConfig;
+use crate::storage::{self, GenerationHistory, HistoryFilter};
+
 
 #[derive(Debug, Deserialize)]
 pub struct ImageQuery {
@@ -528,7 +530,84 @@ async fn api_test_connection(
     Ok(axum::Json(result))
 }
 
+// ==================== History Handlers ====================
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryListQuery {
+    page: Option<usize>,
+    #[serde(alias = "pageSize")]
+    page_size: Option<usize>,
+    model: Option<String>,
+    #[serde(alias = "promptKeyword")]
+    prompt_keyword: Option<String>,
+    #[serde(alias = "startDate")]
+    start_date: Option<String>,
+    #[serde(alias = "endDate")]
+    end_date: Option<String>,
+}
+
+pub async fn api_get_history_handler(
+    axum::extract::Query(query): axum::extract::Query<HistoryListQuery>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let filter = HistoryFilter {
+        model: query.model,
+        prompt_keyword: query.prompt_keyword,
+        start_date: query.start_date,
+        end_date: query.end_date,
+    };
+    
+    match storage::get_history(query.page.unwrap_or(0), query.page_size.unwrap_or(20), Some(filter)) {
+        Ok(list) => Ok(axum::Json(list)),
+        Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryIdBody {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryIdQuery {
+    id: String,
+}
+
+pub async fn api_get_history_by_id_handler(
+    axum::extract::Query(query): axum::extract::Query<HistoryIdQuery>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match storage::get_history_by_id(&query.id) {
+        Ok(h) => Ok(axum::Json(h)),
+        Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn api_add_history_handler(
+    axum::Json(history): axum::Json<GenerationHistory>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match storage::add_history(history) {
+        Ok(h) => Ok(axum::Json(h)),
+        Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn api_delete_history_handler(
+    axum::Json(body): axum::Json<HistoryIdBody>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match storage::delete_history(&body.id) {
+        Ok(_) => Ok(axum::Json(true)),
+        Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+pub async fn api_clear_history_handler() -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match storage::clear_history() {
+        Ok(_) => Ok(axum::Json(true)),
+        Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
 pub fn create_api_router() -> Router {
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -558,6 +637,12 @@ pub fn create_api_router() -> Router {
         .route("/api/reference-images/delete", post(api_delete_reference_image_handler))
         .route("/api/reference-images/add-tag", post(api_add_tag_handler))
         .route("/api/reference-images/remove-tag", post(api_remove_tag_handler))
+        .route("/api/history/list", get(api_get_history_handler))
+        .route("/api/history/get", get(api_get_history_by_id_handler))
+        .route("/api/history/add", post(api_add_history_handler))
+        .route("/api/history/delete", post(api_delete_history_handler))
+        .route("/api/history/clear", post(api_clear_history_handler))
+
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors)
 }

@@ -497,7 +497,13 @@ export async function addHistory(history: {
 
 export async function getHistory(
   page: number = 0,
-  pageSize: number = 20
+  pageSize: number = 20,
+  filter?: {
+    model?: string;
+    promptKeyword?: string;
+    startDate?: string;
+    endDate?: string;
+  }
 ): Promise<{
   total: number;
   items: {
@@ -514,9 +520,16 @@ export async function getHistory(
 }> {
   if (isTauri()) {
     const { invoke } = await import('@tauri-apps/api/core');
-    return invoke('get_history', { page, pageSize });
+    return invoke('get_history', {
+      page,
+      pageSize,
+      model: filter?.model || null,
+      promptKeyword: filter?.promptKeyword || null,
+      startDate: filter?.startDate || null,
+      endDate: filter?.endDate || null,
+    });
   }
-  return fetchApi('/api/history/list', { page, pageSize });
+  return fetchApi('/api/history/list', { page, pageSize, ...filter });
 }
 
 export async function getHistoryById(id: string): Promise<{
