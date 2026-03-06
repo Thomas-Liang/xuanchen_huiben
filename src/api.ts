@@ -565,3 +565,61 @@ export async function clearHistory(): Promise<boolean> {
   }
   return fetchApi('/api/history/clear', {});
 }
+
+export interface Folder {
+  id: string;
+  name: string;
+  parentId: string | null;
+  createdAt: string;
+}
+
+export async function createFolder(name: string, parentId?: string): Promise<Folder> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('create_folder', { name, parentId: parentId || null });
+  }
+  return fetchApi('/api/folders/create', { name, parentId });
+}
+
+export async function renameFolder(id: string, newName: string): Promise<Folder> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('rename_folder', { id, newName });
+  }
+  return fetchApi('/api/folders/rename', { id, newName });
+}
+
+export async function deleteFolder(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_folder', { id });
+  }
+  return fetchApi('/api/folders/delete', { id });
+}
+
+export async function getFolders(parentId?: string): Promise<Folder[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_folders', { parentId: parentId || null });
+  }
+  return fetchApi('/api/folders/list', { parentId });
+}
+
+export async function getFolderTree(): Promise<Folder[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_folder_tree');
+  }
+  return fetchApi('/api/folders/tree');
+}
+
+export async function moveImageToFolder(
+  characterName: string,
+  folderId?: string
+): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('move_image_to_folder', { characterName, folderId: folderId || null });
+  }
+  return fetchApi('/api/folders/move-image', { characterName, folderId });
+}

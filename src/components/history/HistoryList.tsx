@@ -13,13 +13,24 @@ import {
   Pagination,
   Row,
   Col,
+  Flex,
   Descriptions,
   Input,
   Select,
   DatePicker,
   Radio,
+  Form,
+  InputNumber,
+  Switch,
 } from 'antd';
-import { DeleteOutlined, EyeOutlined, ClearOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  EyeOutlined,
+  ClearOutlined,
+  SearchOutlined,
+  RedoOutlined,
+  EditOutlined,
+} from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getHistory, deleteHistory, clearHistory } from '../../api';
 import dayjs from 'dayjs';
@@ -44,11 +55,12 @@ interface HistoryListProps {
   visible: boolean;
   onClose: () => void;
   onApplyParams?: (params: any) => void;
+  onRegenerate?: (history: GenerationHistory, newParams?: Record<string, unknown>) => void;
 }
 
 type QuickFilter = 'all' | 'today' | 'week' | 'month';
 
-export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProps) {
+export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: HistoryListProps) {
   const [history, setHistory] = useState<GenerationHistory[]>([]);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -56,6 +68,9 @@ export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProp
   const [pageSize] = useState(10);
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedHistory, setSelectedHistory] = useState<GenerationHistory | null>(null);
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingHistory, setEditingHistory] = useState<GenerationHistory | null>(null);
+  const [editForm] = Form.useForm();
 
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterModel, setFilterModel] = useState<string | undefined>();
@@ -180,6 +195,42 @@ export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProp
     }
   };
 
+  const handleQuickRegenerate = (record: GenerationHistory) => {
+    if (onRegenerate) {
+      onRegenerate(record);
+    }
+  };
+
+  const handleEditRegenerate = (record: GenerationHistory) => {
+    setEditingHistory(record);
+    editForm.setFieldsValue({
+      prompt: record.prompt,
+      model: record.model,
+      ...record.params,
+    });
+    setEditModalVisible(true);
+  };
+
+  const handleEditConfirm = () => {
+    if (editingHistory && onRegenerate) {
+      editForm.validateFields().then(values => {
+        const newParams = {
+          ...editingHistory.params,
+          prompt: values.prompt,
+          model: values.model,
+          width: values.width,
+          height: values.height,
+          quality: values.quality,
+          watermark: values.watermark,
+          size: values.size,
+        };
+        onRegenerate(editingHistory, newParams);
+        setEditModalVisible(false);
+        setEditingHistory(null);
+      });
+    }
+  };
+
   const columns: ColumnsType<GenerationHistory> = [
     {
       title: '时间',
@@ -231,12 +282,30 @@ export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProp
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 180,
       render: (_, record) => (
         <Space>
           <Button type="text" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
             查看
           </Button>
+          {onRegenerate && (
+            <Button
+              type="text"
+              icon={<RedoOutlined />}
+              onClick={() => handleQuickRegenerate(record)}
+            >
+              重生成
+            </Button>
+          )}
+          {onRegenerate && (
+            <Button
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => handleEditRegenerate(record)}
+            >
+              编辑
+            </Button>
+          )}
           <Popconfirm
             title="确认删除"
             description="确定要删除这条记录吗？"
@@ -288,70 +357,63 @@ export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProp
           />
         </div>,
       ]}
-      width={1100}
+      width="95vw"
+      style={{ maxWidth: 1100, top: 20 }}
     >
       <div style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={12} md={5}>
-            <Input
-              placeholder="搜索提示词..."
-              prefix={<SearchOutlined />}
-              value={searchKeyword}
-              onChange={e => setSearchKeyword(e.target.value)}
-              allowClear
-            />
-          </Col>
-          <Col xs={24} sm={12} md={4}>
-            <Select
-              placeholder="选择模型"
-              value={filterModel}
-              onChange={setFilterModel}
-              allowClear
-              style={{ width: '100%' }}
-              options={[
-                { value: 'seedream', label: 'Seedream' },
-                { value: 'banana_pro', label: 'Banana Pro' },
-              ]}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={5}>
-            <RangePicker
-              value={dateRange}
-              onChange={handleDateRangeChange}
-              style={{ width: '100%' }}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Radio.Group
-              value={quickFilter}
-              onChange={e => handleQuickFilterChange(e.target.value)}
-              optionType="button"
-              buttonStyle="solid"
+        <Flex wrap="wrap" gap="middle" align="center">
+          <Input
+            placeholder="搜索提示词..."
+            prefix={<SearchOutlined />}
+            value={searchKeyword}
+            onChange={e => setSearchKeyword(e.target.value)}
+            allowClear
+            style={{ minWidth: 200, flex: 1 }}
+          />
+          <Select
+            placeholder="选择模型"
+            value={filterModel}
+            onChange={setFilterModel}
+            allowClear
+            style={{ minWidth: 120, flex: 1 }}
+            options={[
+              { value: 'seedream', label: 'Seedream' },
+              { value: 'banana_pro', label: 'Banana Pro' },
+            ]}
+          />
+          <RangePicker
+            value={dateRange}
+            onChange={handleDateRangeChange}
+            style={{ minWidth: 240, flex: 1 }}
+          />
+          <Radio.Group
+            value={quickFilter}
+            onChange={e => handleQuickFilterChange(e.target.value)}
+            optionType="button"
+            buttonStyle="solid"
+            style={{ whiteSpace: 'nowrap' }}
+          >
+            <Radio.Button value="all">全部</Radio.Button>
+            <Radio.Button value="today">今天</Radio.Button>
+            <Radio.Button value="week">本周</Radio.Button>
+            <Radio.Button value="month">本月</Radio.Button>
+          </Radio.Group>
+          <Space>
+            <Button onClick={() => loadHistory(1)} icon={<SearchOutlined />} type="primary">
+              筛选
+            </Button>
+            <Button
+              onClick={() => {
+                setSearchKeyword('');
+                setFilterModel(undefined);
+                setDateRange([null, null]);
+                setQuickFilter('all');
+              }}
             >
-              <Radio.Button value="all">全部</Radio.Button>
-              <Radio.Button value="today">今天</Radio.Button>
-              <Radio.Button value="week">本周</Radio.Button>
-              <Radio.Button value="month">本月</Radio.Button>
-            </Radio.Group>
-          </Col>
-          <Col xs={24} sm={12} md={4}>
-            <Space>
-              <Button onClick={() => loadHistory(1)} icon={<SearchOutlined />} type="primary">
-                筛选
-              </Button>
-              <Button
-                onClick={() => {
-                  setSearchKeyword('');
-                  setFilterModel(undefined);
-                  setDateRange([null, null]);
-                  setQuickFilter('all');
-                }}
-              >
-                重置
-              </Button>
-            </Space>
-          </Col>
-        </Row>
+              重置
+            </Button>
+          </Space>
+        </Flex>
       </div>
 
       <Spin spinning={loading}>
@@ -431,7 +493,8 @@ export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProp
             关闭
           </Button>,
         ]}
-        width={800}
+        width="95vw"
+        style={{ maxWidth: 800 }}
       >
         {selectedHistory && (
           <div>
@@ -486,6 +549,73 @@ export function HistoryList({ visible, onClose, onApplyParams }: HistoryListProp
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="编辑参数重新生成"
+        open={editModalVisible}
+        onCancel={() => {
+          setEditModalVisible(false);
+          setEditingHistory(null);
+        }}
+        onOk={handleEditConfirm}
+        okText="开始生成"
+        cancelText="取消"
+        width="95vw"
+        style={{ maxWidth: 600 }}
+      >
+        <Form form={editForm} layout="vertical">
+          <Form.Item
+            name="prompt"
+            label="提示词"
+            rules={[{ required: true, message: '请输入提示词' }]}
+          >
+            <Input.TextArea rows={4} placeholder="输入图像描述" />
+          </Form.Item>
+          <Form.Item name="model" label="模型">
+            <Select
+              options={[
+                { value: 'seedream', label: 'Seedream' },
+                { value: 'banana_pro', label: 'Banana Pro' },
+              ]}
+            />
+          </Form.Item>
+          {editingHistory?.model === 'seedream' && (
+            <>
+              <Form.Item name="width" label="宽度">
+                <InputNumber min={256} max={2048} step={64} style={{ width: '100%' }} />
+              </Form.Item>
+              <Form.Item name="height" label="高度">
+                <InputNumber min={256} max={2048} step={64} style={{ width: '100%' }} />
+              </Form.Item>
+            </>
+          )}
+          {editingHistory?.model === 'banana_pro' && (
+            <Form.Item name="size" label="分辨率">
+              <Select
+                options={[
+                  { value: '1024x1024', label: '1024x1024' },
+                  { value: '1152x896', label: '1152x896' },
+                  { value: '1216x832', label: '1216x832' },
+                  { value: '1344x768', label: '1344x768' },
+                  { value: '1536x640', label: '1536x640' },
+                ]}
+              />
+            </Form.Item>
+          )}
+          <Form.Item name="quality" label="质量">
+            <Select
+              options={[
+                { value: 'standard', label: '标准' },
+                { value: 'high', label: '高' },
+                { value: 'ultra', label: '超高' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="watermark" label="水印" valuePropName="checked">
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
+        </Form>
       </Modal>
     </Modal>
   );

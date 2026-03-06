@@ -4,10 +4,12 @@ mod storage;
 
 use api::create_api_router;
 use commands::character_binding::{
-    add_tag_to_reference, bind_character_reference, delete_reference_image, get_all_bindings,
-    get_all_tags, get_bindings_for_prompt, get_character_binding, get_references_by_type,
-    get_reference_images, load_bindings_from_file, remove_tag_from_reference,
-    save_reference_image, search_reference_images, unbind_character,
+    add_tag_to_reference, bind_character_reference, create_folder, delete_folder,
+    delete_reference_image, get_all_bindings, get_all_tags, get_bindings_for_prompt,
+    get_character_binding, get_folder_tree, get_folders, get_references_by_type,
+    get_reference_images, load_bindings_from_file, load_folders_from_file,
+    move_image_to_folder, remove_tag_from_reference, rename_folder, save_reference_image,
+    search_reference_images, unbind_character,
 };
 use commands::image_generator::{
     generate_image, get_default_api_config, get_default_generation_config,
@@ -174,6 +176,7 @@ pub async fn main() {
     }
     
     let _ = load_bindings_from_file();
+    let _ = load_folders_from_file();
     commands::image_generator::load_config_from_file();
     commands::character_binding::load_tags_from_file();
 
@@ -238,7 +241,7 @@ pub async fn main() {
                 })
                 .build(app)?;
 
-            let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyP);
+            let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyP);
             let app_handle = app.handle().clone();
             app.global_shortcut().on_shortcut(shortcut, move |_app, _shortcut, event| {
                 println!("快捷键被触发, event: {:?}", event);
@@ -319,6 +322,13 @@ pub async fn main() {
             // Settings CRUD
             get_settings,
             save_settings,
+            // Folder CRUD
+            create_folder,
+            rename_folder,
+            delete_folder,
+            get_folders,
+            get_folder_tree,
+            move_image_to_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

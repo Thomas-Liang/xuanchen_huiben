@@ -26,7 +26,6 @@ import {
   Divider,
   Alert,
   Steps,
-  Popconfirm,
   Checkbox,
   Dropdown,
 } from 'antd';
@@ -41,8 +40,6 @@ import {
   DownloadOutlined,
   QuestionCircleOutlined,
   PictureOutlined,
-  SearchOutlined,
-  PlusOutlined,
   EyeOutlined,
   LinkOutlined,
   SunOutlined,
@@ -63,6 +60,7 @@ import { useTheme } from './theme';
 import { SlideUp, FadeIn, ScaleIn } from './theme/animations';
 import { Toolbar } from './components/Toolbar';
 import { HistoryList } from './components/history';
+import { ReferenceLibrary } from './components/library';
 import './App.css';
 
 const { Header, Content, Sider } = Layout;
@@ -681,15 +679,6 @@ function MainApp() {
     }
   };
 
-  const handleSearchReference = () => {
-    loadReferenceImages();
-  };
-
-  const handleFilterTypeChange = (type: string) => {
-    setReferenceFilterType(type);
-    loadReferenceImages();
-  };
-
   const handleSaveImage = async (imageUrl: string) => {
     try {
       const saved = await api.saveImageDialog(imageUrl);
@@ -747,6 +736,35 @@ function MainApp() {
 
     setCurrentPage('workspace');
     message.success('已应用历史记录参数');
+  };
+
+  const handleRegenerateHistory = async (history: any, newParams?: any) => {
+    const params = newParams || history.params;
+    if (!params) return;
+
+    setHistoryModalVisible(false);
+
+    if (params.prompt) setPrompt(params.prompt);
+    if (params.model) setSelectedModel(params.model as 'seedream' | 'banana_pro');
+    if (params.quality) setImageQuality(params.quality as 'standard' | 'high' | 'ultra');
+    if (params.watermark !== undefined) setWatermark(params.watermark.toString());
+
+    if (params.model === 'seedream' && params.width && params.height) {
+      setSeedreamSize(`${params.width}x${params.height}`);
+    } else if (params.model === 'banana_pro' && params.size) {
+      setBananaResolution(params.size);
+    }
+
+    if (params.width && params.height) {
+      const w = params.width;
+      const h = params.height;
+      if (w === h) setImageSize({ width: 1, height: 1 });
+      else if (w > h) setImageSize({ width: 16, height: 9 });
+      else setImageSize({ width: 9, height: 16 });
+    }
+
+    setCurrentPage('workspace');
+    message.success('已应用参数，请点击生成按钮');
   };
 
   const handleNavigate = (page: string) => {
@@ -2023,7 +2041,11 @@ function MainApp() {
                       点击导航栏<Text style={{ color: '#6366f1' }}>「参考图库」</Text>按钮可以：
                     </p>
                     <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                      <li>查看所有已绑定的参考图</li>
+                      <li>按树形目录查看图片：全部图片 / 未分类(根目录) / 自定义文件夹</li>
+                      <li>创建、重命名、删除文件夹（支持新建子文件夹）</li>
+                      <li>上传图片时可直接指定保存目录</li>
+                      <li>将图片移动到任意文件夹进行归档</li>
+                      <li>点击图片可预览完整大图</li>
                       <li>
                         按类型筛选（<Text style={{ color: '#10b981' }}>人物</Text>/
                         <Text style={{ color: '#10b981' }}>人脸</Text>/
@@ -2035,6 +2057,12 @@ function MainApp() {
                       <li>为参考图添加/移除标签</li>
                       <li>删除不需要的参考图</li>
                     </ul>
+                    <p>
+                      <Text strong style={{ color: '#ef4444' }}>
+                        重名提示：
+                      </Text>{' '}
+                      同级目录下创建或重命名为相同名称会报错，请更换名称。
+                    </p>
                     <p>
                       <Text strong style={{ color: '#f59e0b' }}>
                         预设标签：
@@ -2161,203 +2189,39 @@ function MainApp() {
         </div>
       </Modal>
 
-      <Modal
-        title="参考图管理"
-        open={referenceModalVisible}
-        onCancel={() => setReferenceModalVisible(false)}
-        footer={null}
-        width={900}
-      >
-        <div style={{ padding: '16px 0' }}>
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={8}>
-              <Input
-                placeholder="搜索角色名或标签"
-                prefix={<SearchOutlined />}
-                value={referenceSearch}
-                onChange={e => setReferenceSearch(e.target.value)}
-                onPressEnter={handleSearchReference}
-                allowClear
-              />
-            </Col>
-            <Col span={8}>
-              <Select
-                placeholder="筛选类型"
-                value={referenceFilterType}
-                onChange={handleFilterTypeChange}
-                style={{ width: '100%' }}
-                allowClear
-                options={[
-                  { value: '人物', label: '人物' },
-                  { value: '人脸', label: '人脸' },
-                  { value: '全身', label: '全身' },
-                  { value: '场景', label: '场景' },
-                ]}
-              />
-            </Col>
-            <Col span={8}>
-              <Select
-                mode="multiple"
-                placeholder="按标签筛选"
-                value={selectedTags}
-                onChange={tags => {
-                  setSelectedTags(tags);
-                  if (tags.length === 0) {
-                    setReferenceFilterType('');
-                    setReferenceSearch('');
-                  }
-                  setTimeout(() => loadReferenceImages(), 0);
-                }}
-                style={{ width: '100%' }}
-                allowClear
-                options={[
-                  { value: '可爱', label: '可爱' },
-                  { value: '帅气', label: '帅气' },
-                  { value: '美丽', label: '美丽' },
-                  { value: '成熟', label: '成熟' },
-                  { value: '青春', label: '青春' },
-                  { value: '活泼', label: '活泼' },
-                  { value: '内向', label: '内向' },
-                  { value: '冷酷', label: '冷酷' },
-                  ...allTags
-                    .filter(
-                      t =>
-                        !['可爱', '帅气', '美丽', '成熟', '青春', '活泼', '内向', '冷酷'].includes(
-                          t
-                        )
-                    )
-                    .map(t => ({ value: t, label: t })),
-                ]}
-              />
-            </Col>
-          </Row>
-
-          <Spin spinning={referenceLoading}>
-            {referenceImages.length > 0 ? (
-              <List
-                grid={{ gutter: 16, column: 3 }}
-                dataSource={referenceImages}
-                renderItem={item => (
-                  <List.Item>
-                    <Card
-                      hoverable
-                      cover={
-                        <div
-                          style={{ height: 150, overflow: 'hidden', borderRadius: '4px 4px 0 0' }}
-                        >
-                          <Image
-                            src={api.getImageUrl(item.referenceImagePath || '')}
-                            alt={item.characterName}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            fallback="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-                          />
-                        </div>
-                      }
-                      actions={[
-                        <a
-                          key="addTag"
-                          onClick={() => {
-                            setAddTagCharacter(item.characterName);
-                            setNewTag('');
-                            setAddTagModalVisible(true);
-                          }}
-                          style={{ color: '#1890ff', cursor: 'pointer' }}
-                        >
-                          <PlusOutlined /> 添加标签
-                        </a>,
-                        <Popconfirm
-                          title="确认删除"
-                          description="确定要删除这个参考图吗？"
-                          onConfirm={() => handleDeleteReference(item.characterName)}
-                          okText="确定"
-                          cancelText="取消"
-                        >
-                          <DeleteOutlined key="delete" style={{ color: '#ff4d4f' }} />
-                        </Popconfirm>,
-                      ]}
-                    >
-                      <Card.Meta
-                        title={<>@{item.characterName}</>}
-                        description={
-                          <div>
-                            <Tag color={item.imageType === '人物' ? 'blue' : 'green'}>
-                              {item.imageType}
-                            </Tag>
-                            <div style={{ marginTop: 8 }}>
-                              {item.tags && item.tags.length > 0 ? (
-                                <>
-                                  {item.tags.map(tag => (
-                                    <Tag
-                                      key={tag}
-                                      closable
-                                      onClose={() => handleRemoveTag(item.characterName, tag)}
-                                      style={{ marginBottom: 4 }}
-                                    >
-                                      {tag}
-                                    </Tag>
-                                  ))}
-                                </>
-                              ) : (
-                                <Text type="secondary">暂无标签</Text>
-                              )}
-                            </div>
-                          </div>
-                        }
-                      />
-                    </Card>
-                  </List.Item>
-                )}
-              />
-            ) : (
-              <Empty description="暂无参考图" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            )}
-          </Spin>
-
-          {referenceImages.length > 0 && (
-            <div style={{ marginTop: 16, textAlign: 'center' }}>
-              <Text type="secondary">共 {referenceImages.length} 张参考图</Text>
-            </div>
-          )}
-
-          <Modal
-            title="添加标签"
-            open={addTagModalVisible}
-            onCancel={() => setAddTagModalVisible(false)}
-            onOk={handleAddTag}
-            okText="添加"
-          >
-            <p>为 @{addTagCharacter} 添加标签：</p>
-            <Select
-              mode="tags"
-              placeholder="输入或选择标签"
-              value={newTag ? [newTag] : []}
-              onChange={vals => setNewTag(vals[vals.length - 1] || '')}
-              style={{ width: '100%' }}
-              options={[
-                { value: '可爱', label: '可爱' },
-                { value: '帅气', label: '帅气' },
-                { value: '美丽', label: '美丽' },
-                { value: '成熟', label: '成熟' },
-                { value: '青春', label: '青春' },
-                { value: '活泼', label: '活泼' },
-                { value: '内向', label: '内向' },
-                { value: '冷酷', label: '冷酷' },
-                ...allTags
-                  .filter(
-                    t =>
-                      !['可爱', '帅气', '美丽', '成熟', '青春', '活泼', '内向', '冷酷'].includes(t)
-                  )
-                  .map(t => ({ value: t, label: t })),
-              ]}
-            />
-          </Modal>
-        </div>
-      </Modal>
+      <ReferenceLibrary
+        visible={referenceModalVisible}
+        onClose={() => setReferenceModalVisible(false)}
+        referenceImages={referenceImages}
+        setReferenceImages={setReferenceImages}
+        referenceLoading={referenceLoading}
+        setReferenceLoading={setReferenceLoading}
+        allTags={allTags}
+        setAllTags={setAllTags}
+        referenceSearch={referenceSearch}
+        setReferenceSearch={setReferenceSearch}
+        referenceFilterType={referenceFilterType}
+        setReferenceFilterType={setReferenceFilterType}
+        selectedTags={selectedTags}
+        setSelectedTags={setSelectedTags}
+        onLoadReferenceImages={loadReferenceImages}
+        onLoadAllTags={loadAllTags}
+        onDeleteReference={handleDeleteReference}
+        addTagModalVisible={addTagModalVisible}
+        setAddTagModalVisible={setAddTagModalVisible}
+        addTagCharacter={addTagCharacter}
+        setAddTagCharacter={setAddTagCharacter}
+        newTag={newTag}
+        setNewTag={setNewTag}
+        onAddTag={handleAddTag}
+        onRemoveTag={handleRemoveTag}
+      />
 
       <HistoryList
         visible={historyModalVisible}
         onClose={() => setHistoryModalVisible(false)}
         onApplyParams={handleApplyHistoryParams}
+        onRegenerate={handleRegenerateHistory}
       />
     </ConfigProvider>
   );

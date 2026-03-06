@@ -75,6 +75,7 @@ pub struct ReferenceImageQueryHttp {
     image_type: Option<String>,
     search: Option<String>,
     tags: Option<String>,
+    folder_id: Option<String>,
 }
 
 pub async fn api_get_reference_images_handler(
@@ -85,6 +86,7 @@ pub async fn api_get_reference_images_handler(
         image_type: query.image_type,
         search: query.search,
         tags: query.tags.map(|t| t.split(',').map(|s| s.to_string()).collect()),
+        folder_id: query.folder_id,
     };
     let images = get_reference_images(Some(query));
     println!("[API] get_reference_images returning {} images", images.len());

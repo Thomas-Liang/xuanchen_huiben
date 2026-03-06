@@ -11,6 +11,19 @@ pub static CHARACTER_BINDINGS: Lazy<std::sync::Mutex<HashMap<String, CharacterBi
 pub static REFERENCE_TAGS: Lazy<std::sync::Mutex<HashMap<String, Vec<String>>>> =
     Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
 
+pub static FOLDERS: Lazy<std::sync::Mutex<HashMap<String, Folder>>> =
+    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Folder {
+    pub id: String,
+    pub name: String,
+    #[serde(alias = "parentId")]
+    pub parent_id: Option<String>,
+    #[serde(alias = "createdAt")]
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterBinding {
     #[serde(alias = "characterName")]
@@ -24,6 +37,8 @@ pub struct CharacterBinding {
     pub bound: bool,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(alias = "folderId")]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +46,8 @@ pub struct ReferenceImageQuery {
     pub image_type: Option<String>,
     pub search: Option<String>,
     pub tags: Option<Vec<String>>,
+    #[serde(alias = "folderId")]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +110,7 @@ pub fn save_reference_image(
         created_at: chrono_now(),
         bound: true,
         tags: Vec::new(),
+        folder_id: None,
     };
 
     let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
@@ -125,6 +143,7 @@ pub fn bind_character_reference(
         created_at: chrono_now(),
         bound: true,
         tags: Vec::new(),
+        folder_id: None,
     };
 
     let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
@@ -289,6 +308,14 @@ pub fn get_reference_images(query: Option<ReferenceImageQuery>) -> Vec<Character
                 result.retain(|b| filter_tags.iter().any(|t| b.tags.contains(t)));
             }
         }
+
+        if let Some(ref folder_id) = q.folder_id {
+            if folder_id.is_empty() {
+                result.retain(|b| b.folder_id.is_none());
+            } else {
+                result.retain(|b| b.folder_id.as_ref() == Some(folder_id));
+            }
+        }
     }
 
     result
@@ -300,6 +327,7 @@ pub fn search_reference_images(keyword: String) -> Vec<CharacterBinding> {
         image_type: None,
         search: Some(keyword),
         tags: None,
+        folder_id: None,
     };
     get_reference_images(Some(query))
 }
@@ -366,6 +394,7 @@ pub fn get_references_by_type(image_type: String) -> Vec<CharacterBinding> {
         image_type: Some(image_type),
         search: None,
         tags: None,
+        folder_id: None,
     };
     get_reference_images(Some(query))
 }
@@ -410,4 +439,202 @@ fn save_tags_to_file(tags: &HashMap<String, Vec<String>>) -> Result<(), String> 
     fs::write(config_path, json).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+fn generate_folder_id() -> String {
+    format!("folder_{}", chrono_timestamp())
+}
+
+#[tauri::command]
+pub fn create_folder(name: String, parent_id: Option<String>) -> Result<Folder, String> {
+    let normalized_name = name.trim();
+    if normalized_name.is_empty() {
+        return Err("文件夹名称不能为空".to_string());
+    }
+
+    if let Some(ref pid) = parent_id {
+        let folders = FOLDERS.lock().map_err(|e| e.to_string())?;
+        if !folders.contains_key(pid) {
+            return Err("父文件夹不存在".to_string());
+        }
+    }
+
+    let mut folders = FOLDERS.lock().map_err(|e| e.to_string())?;
+
+    let duplicated = folders.values().any(|f| {
+        f.parent_id == parent_id
+            && f.name.trim().eq_ignore_ascii_case(normalized_name)
+    });
+    if duplicated {
+        return Err("同级目录下已存在同名文件夹".to_string());
+    }
+
+    let folder = Folder {
+        id: generate_folder_id(),
+        name: normalized_name.to_string(),
+        parent_id,
+        created_at: chrono_now(),
+    };
+
+    folders.insert(folder.id.clone(), folder.clone());
+
+    let _ = save_folders_to_file(&folders);
+
+    Ok(folder)
+}
+
+#[tauri::command]
+pub fn rename_folder(id: String, new_name: String) -> Result<Folder, String> {
+    let normalized_name = new_name.trim();
+    if normalized_name.is_empty() {
+        return Err("文件夹名称不能为空".to_string());
+    }
+
+    let mut folders = FOLDERS.lock().map_err(|e| e.to_string())?;
+
+    let parent_id = folders
+        .get(&id)
+        .ok_or("文件夹不存在")?
+        .parent_id
+        .clone();
+
+    let duplicated = folders.values().any(|f| {
+        f.id != id
+            && f.parent_id == parent_id
+            && f.name.trim().eq_ignore_ascii_case(normalized_name)
+    });
+    if duplicated {
+        return Err("同级目录下已存在同名文件夹".to_string());
+    }
+
+    let folder = folders.get_mut(&id).ok_or("文件夹不存在")?;
+    folder.name = normalized_name.to_string();
+
+    let result = folder.clone();
+    let _ = save_folders_to_file(&folders);
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub fn delete_folder(id: String) -> Result<bool, String> {
+    let mut folders = FOLDERS.lock().map_err(|e| e.to_string())?;
+
+    if !folders.contains_key(&id) {
+        return Err("文件夹不存在".to_string());
+    }
+
+    let mut to_delete = vec![id.clone()];
+    let all_ids: Vec<String> = folders.keys().cloned().collect();
+    for fid in all_ids {
+        if let Some(f) = folders.get(&fid) {
+            if let Some(ref pid) = f.parent_id {
+                if pid == &id && !to_delete.contains(&fid) {
+                    to_delete.push(fid);
+                }
+            }
+        }
+    }
+
+    for fid in &to_delete {
+        folders.remove(fid);
+    }
+
+    let _ = save_folders_to_file(&folders);
+
+    let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
+    for binding in bindings.values_mut() {
+        if let Some(ref folder_id) = binding.folder_id {
+            if to_delete.contains(folder_id) {
+                binding.folder_id = None;
+            }
+        }
+    }
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn get_folders(parent_id: Option<String>) -> Vec<Folder> {
+    let folders = match FOLDERS.lock() {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+
+    folders
+        .values()
+        .filter(|f| f.parent_id == parent_id)
+        .cloned()
+        .collect()
+}
+
+#[tauri::command]
+pub fn get_folder_tree() -> Vec<Folder> {
+    let folders = match FOLDERS.lock() {
+        Ok(f) => f,
+        Err(_) => return Vec::new(),
+    };
+
+    folders.values().cloned().collect()
+}
+
+#[tauri::command]
+pub fn move_image_to_folder(
+    character_name: String,
+    folder_id: Option<String>,
+) -> Result<bool, String> {
+    let mut folders = FOLDERS.lock().map_err(|e| e.to_string())?;
+
+    if let Some(ref fid) = folder_id {
+        if !folders.contains_key(fid) {
+            return Err("目标文件夹不存在".to_string());
+        }
+    }
+    drop(folders);
+
+    let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
+    let binding = bindings.get_mut(&character_name).ok_or("图片不存在")?;
+    binding.folder_id = folder_id;
+
+    save_bindings_to_file(&bindings)?;
+
+    Ok(true)
+}
+
+fn save_folders_to_file(folders: &HashMap<String, Folder>) -> Result<(), String> {
+    let app_data = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+
+    let config_dir = PathBuf::from(app_data)
+        .join("xuanchen-huiben")
+        .join("config");
+
+    if !config_dir.exists() {
+        fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
+    }
+
+    let config_path = config_dir.join("folders.json");
+    let json = serde_json::to_string_pretty(folders).map_err(|e| e.to_string())?;
+    fs::write(config_path, json).map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+pub fn load_folders_from_file() {
+    let app_data = std::env::var("APPDATA")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_else(|_| ".".to_string());
+
+    let config_path = PathBuf::from(app_data)
+        .join("xuanchen-huiben")
+        .join("config")
+        .join("folders.json");
+
+    if let Ok(content) = fs::read_to_string(&config_path) {
+        if let Ok(loaded) = serde_json::from_str::<HashMap<String, Folder>>(&content) {
+            let mut folders = FOLDERS.lock().unwrap();
+            *folders = loaded;
+        }
+    }
 }
