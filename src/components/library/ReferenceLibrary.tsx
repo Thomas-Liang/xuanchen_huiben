@@ -18,6 +18,7 @@ import {
   message,
   Radio,
   Space,
+  Checkbox,
 } from 'antd';
 import {
   SearchOutlined,
@@ -26,6 +27,9 @@ import {
   FolderOutlined,
   UploadOutlined,
   EditOutlined,
+  CheckSquareOutlined,
+  FolderOpenOutlined,
+  TagsOutlined,
 } from '@ant-design/icons';
 import type { CharacterBinding } from '../../types';
 import * as api from '../../api';
@@ -78,6 +82,7 @@ export function ReferenceLibrary({
   selectedTags,
   setSelectedTags,
   onLoadReferenceImages,
+  onLoadAllTags,
   onDeleteReference,
   addTagModalVisible,
   setAddTagModalVisible,
@@ -103,6 +108,12 @@ export function ReferenceLibrary({
   const [renameFolderName, setRenameFolderName] = useState('');
   const [moveImageModalVisible, setMoveImageModalVisible] = useState(false);
   const [moveImageCharacterName, setMoveImageCharacterName] = useState('');
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<string[]>([]);
+  const [batchMoveModalVisible, setBatchMoveModalVisible] = useState(false);
+  const [batchAddTagsModalVisible, setBatchAddTagsModalVisible] = useState(false);
+  const [batchTags, setBatchTags] = useState<string>('');
+  const [batchDeleteLoading, setBatchDeleteLoading] = useState(false);
 
   // 上传相关状态
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
@@ -248,19 +259,128 @@ export function ReferenceLibrary({
     }
   };
 
+  const toggleMultiSelectMode = () => {
+    if (multiSelectMode) {
+      setSelectedImages([]);
+    }
+    setMultiSelectMode(!multiSelectMode);
+  };
+
+  const toggleImageSelection = (characterName: string) => {
+    setSelectedImages(prev => {
+      if (prev.includes(characterName)) {
+        return prev.filter(name => name !== characterName);
+      } else {
+        return [...prev, characterName];
+      }
+    });
+  };
+
+  const selectAllImages = () => {
+    if (selectedImages.length === referenceImages.length) {
+      setSelectedImages([]);
+    } else {
+      setSelectedImages(referenceImages.map(img => img.characterName));
+    }
+  };
+
+  const handleBatchMove = async (targetFolderId?: string) => {
+    try {
+      await api.batchMoveToFolder(selectedImages, targetFolderId);
+      setBatchMoveModalVisible(false);
+      setSelectedImages([]);
+      setMultiSelectMode(false);
+      if (selectedFolderId === 'root') {
+        loadImagesByFolder(null);
+      } else if (selectedFolderId === 'all' || !selectedFolderId) {
+        onLoadReferenceImages();
+      } else {
+        loadImagesByFolder(selectedFolderId);
+      }
+      message.success(`成功移动 ${selectedImages.length} 张图片`);
+    } catch (error) {
+      console.error('批量移动失败:', error);
+      message.error(`批量移动失败: ${error}`);
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    setBatchDeleteLoading(true);
+    try {
+      await api.batchDeleteReferences(selectedImages);
+      setSelectedImages([]);
+      setMultiSelectMode(false);
+      if (selectedFolderId === 'root') {
+        loadImagesByFolder(null);
+      } else if (selectedFolderId === 'all' || !selectedFolderId) {
+        onLoadReferenceImages();
+      } else {
+        loadImagesByFolder(selectedFolderId);
+      }
+      message.success(`成功删除 ${selectedImages.length} 张图片`);
+    } catch (error) {
+      console.error('批量删除失败:', error);
+      message.error(`批量删除失败: ${error}`);
+    } finally {
+      setBatchDeleteLoading(false);
+    }
+  };
+
+  const handleBatchAddTags = async () => {
+    if (!batchTags.trim()) {
+      message.warning('请输入标签');
+      return;
+    }
+    const tags = batchTags
+      .split(',')
+      .map(t => t.trim())
+      .filter(t => t);
+    if (tags.length === 0) {
+      message.warning('请输入有效的标签');
+      return;
+    }
+    try {
+      await api.batchAddTags(selectedImages, tags);
+      setBatchAddTagsModalVisible(false);
+      setBatchTags('');
+      setSelectedImages([]);
+      setMultiSelectMode(false);
+      if (selectedFolderId === 'root') {
+        loadImagesByFolder(null);
+      } else if (selectedFolderId === 'all' || !selectedFolderId) {
+        onLoadReferenceImages();
+      } else {
+        loadImagesByFolder(selectedFolderId);
+      }
+      onLoadAllTags();
+      message.success(`成功为 ${selectedImages.length} 张图片添加标签`);
+    } catch (error) {
+      console.error('批量添加标签失败:', error);
+      message.error(`批量添加标签失败: ${error}`);
+    }
+  };
+
   const buildFolderTree = (allFolders: Folder[]): any[] => {
     const rootFolders = allFolders.filter(f => !f.parentId);
     return rootFolders.map(folder => ({
       key: folder.id,
       title: (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }} className="folder-tree-node">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            width: '100%',
+          }}
+          className="folder-tree-node"
+        >
           <span style={{ marginRight: 8 }}>{folder.name}</span>
           <Space size={0} onClick={e => e.stopPropagation()}>
             <Button
               type="text"
               size="small"
               icon={<PlusOutlined />}
-              onClick={(e) => {
+              onClick={e => {
                 e.stopPropagation();
                 setNewFolderParentId(folder.id || null);
                 setNewFolderModalVisible(true);
@@ -271,7 +391,7 @@ export function ReferenceLibrary({
               type="text"
               size="small"
               icon={<EditOutlined />}
-              onClick={(e) => {
+              onClick={e => {
                 e.stopPropagation();
                 setRenameFolderId(folder.id || '');
                 setRenameFolderName(folder.name);
@@ -345,7 +465,7 @@ export function ReferenceLibrary({
       message.warning('请选择图片');
       return;
     }
-    
+
     setUploadLoading(true);
     try {
       if (uploadedImage.startsWith('data:')) {
@@ -359,11 +479,11 @@ export function ReferenceLibrary({
       if (targetFolderId === null) {
         targetFolderId = selectedFolderId;
       }
-      
+
       if (targetFolderId === 'root' || targetFolderId === 'all') {
         targetFolderId = '';
       }
-      
+
       if (targetFolderId !== null) {
         await api.moveImageToFolder(uploadCharacterName, targetFolderId || undefined);
       }
@@ -373,7 +493,7 @@ export function ReferenceLibrary({
       setUploadCharacterName('');
       setUploadedImage('');
       setUploadTargetFolderId(null);
-      
+
       if (selectedFolderId === 'root') {
         loadImagesByFolder(null);
       } else if (selectedFolderId === 'all' || !selectedFolderId) {
@@ -432,87 +552,138 @@ export function ReferenceLibrary({
               background: '#fafafa',
             }}
           >
-          <Flex
-            wrap={isWideToolbar ? false : 'wrap'}
-            gap={12}
-            align={isWideToolbar ? 'center' : 'stretch'}
-          >
-            <div style={{ flex: 1, minWidth: isWideToolbar ? 0 : '100%' }}>
+            <Flex
+              wrap={isWideToolbar ? false : 'wrap'}
+              gap={12}
+              align={isWideToolbar ? 'center' : 'stretch'}
+            >
+              <div style={{ flex: 1, minWidth: isWideToolbar ? 0 : '100%' }}>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: isWideToolbar ? '1.3fr minmax(180px, 0.9fr) 1.1fr' : '1fr',
+                    gap: 12,
+                  }}
+                >
+                  <Input
+                    placeholder="搜索角色名或标签"
+                    prefix={<SearchOutlined />}
+                    value={referenceSearch}
+                    onChange={e => setReferenceSearch(e.target.value)}
+                    onPressEnter={handleSearchReference}
+                    allowClear
+                    size="large"
+                  />
+                  <Select
+                    placeholder="筛选类型"
+                    value={referenceFilterType}
+                    onChange={handleFilterTypeChange}
+                    style={{ width: '100%' }}
+                    allowClear
+                    size="large"
+                    options={[
+                      { value: '人物', label: '人物' },
+                      { value: '人脸', label: '人脸' },
+                      { value: '全身', label: '全身' },
+                      { value: '场景', label: '场景' },
+                    ]}
+                  />
+                  <Select
+                    mode="multiple"
+                    placeholder="按标签筛选"
+                    value={selectedTags}
+                    onChange={handleTagsChange}
+                    style={{ width: '100%' }}
+                    allowClear
+                    size="large"
+                    options={tagOptions}
+                  />
+                </div>
+              </div>
               <div
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: isWideToolbar
-                    ? '1.3fr minmax(180px, 0.9fr) 1.1fr'
-                    : '1fr',
-                  gap: 12,
+                  marginLeft: isWideToolbar ? 0 : 'auto',
+                  width: isNarrowToolbar ? '100%' : 'auto',
+                  display: 'flex',
+                  justifyContent: isWideToolbar ? 'flex-end' : 'flex-start',
+                  flexShrink: 0,
                 }}
               >
-                <Input
-                  placeholder="搜索角色名或标签"
-                  prefix={<SearchOutlined />}
-                  value={referenceSearch}
-                  onChange={e => setReferenceSearch(e.target.value)}
-                  onPressEnter={handleSearchReference}
-                  allowClear
-                  size="large"
-                />
-                <Select
-                  placeholder="筛选类型"
-                  value={referenceFilterType}
-                  onChange={handleFilterTypeChange}
-                  style={{ width: '100%' }}
-                  allowClear
-                  size="large"
-                  options={[
-                    { value: '人物', label: '人物' },
-                    { value: '人脸', label: '人脸' },
-                    { value: '全身', label: '全身' },
-                    { value: '场景', label: '场景' },
-                  ]}
-                />
-                <Select
-                  mode="multiple"
-                  placeholder="按标签筛选"
-                  value={selectedTags}
-                  onChange={handleTagsChange}
-                  style={{ width: '100%' }}
-                  allowClear
-                  size="large"
-                  options={tagOptions}
-                />
+                <Space size={12}>
+                  {multiSelectMode ? (
+                    <>
+                      <Button onClick={selectAllImages} size="large">
+                        {selectedImages.length === referenceImages.length ? '取消全选' : '全选'}
+                      </Button>
+                      <Button
+                        icon={<FolderOpenOutlined />}
+                        onClick={() => setBatchMoveModalVisible(true)}
+                        disabled={selectedImages.length === 0}
+                        size="large"
+                      >
+                        批量移动 {selectedImages.length > 0 ? `(${selectedImages.length})` : ''}
+                      </Button>
+                      <Button
+                        icon={<TagsOutlined />}
+                        onClick={() => setBatchAddTagsModalVisible(true)}
+                        disabled={selectedImages.length === 0}
+                        size="large"
+                      >
+                        批量标签 {selectedImages.length > 0 ? `(${selectedImages.length})` : ''}
+                      </Button>
+                      <Popconfirm
+                        title="确认删除"
+                        description={`确定要删除选中的 ${selectedImages.length} 张参考图吗？`}
+                        onConfirm={handleBatchDelete}
+                        okText="确定"
+                        cancelText="取消"
+                      >
+                        <Button
+                          danger
+                          icon={<DeleteOutlined />}
+                          disabled={selectedImages.length === 0}
+                          loading={batchDeleteLoading}
+                          size="large"
+                        >
+                          批量删除 {selectedImages.length > 0 ? `(${selectedImages.length})` : ''}
+                        </Button>
+                      </Popconfirm>
+                      <Button onClick={toggleMultiSelectMode} size="large">
+                        取消多选
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        icon={<CheckSquareOutlined />}
+                        onClick={toggleMultiSelectMode}
+                        size="large"
+                      >
+                        多选模式
+                      </Button>
+                      <Button
+                        type="primary"
+                        icon={<UploadOutlined />}
+                        onClick={() => setUploadModalVisible(true)}
+                        size="large"
+                      >
+                        上传图片
+                      </Button>
+                      <Button
+                        icon={<PlusOutlined />}
+                        onClick={() => {
+                          setNewFolderParentId(null);
+                          setNewFolderModalVisible(true);
+                        }}
+                        size="large"
+                      >
+                        新建文件夹
+                      </Button>
+                    </>
+                  )}
+                </Space>
               </div>
-            </div>
-            <div
-              style={{
-                marginLeft: isWideToolbar ? 0 : 'auto',
-                width: isNarrowToolbar ? '100%' : 'auto',
-                display: 'flex',
-                justifyContent: isWideToolbar ? 'flex-end' : 'flex-start',
-                flexShrink: 0,
-              }}
-            >
-              <Space size={12}>
-                <Button
-                  type="primary"
-                  icon={<UploadOutlined />}
-                  onClick={() => setUploadModalVisible(true)}
-                  size="large"
-                >
-                  上传图片
-                </Button>
-                <Button
-                  icon={<PlusOutlined />}
-                  onClick={() => {
-                    setNewFolderParentId(null);
-                    setNewFolderModalVisible(true);
-                  }}
-                  size="large"
-                >
-                  新建文件夹
-                </Button>
-              </Space>
-            </div>
-          </Flex>
+            </Flex>
           </div>
 
           <Flex gap={16} align="start">
@@ -527,28 +698,34 @@ export function ReferenceLibrary({
                 overflow: 'auto',
               }}
             >
-                <Spin spinning={folderLoading}>
-                  <Tree
-                    blockNode
-                    showIcon
-                    defaultExpandAll
-                    treeData={[
-                      {
-                        key: 'all',
-                        title: '全部图片',
-                        icon: <FolderOutlined />,
-                      },
-                      {
-                        key: 'root',
-                        title: '未分类 (根目录)',
-                        icon: <FolderOutlined />,
-                      },
-                      ...folderTreeData,
-                    ]}
-                    onSelect={handleSelectFolder}
-                    selectedKeys={selectedFolderId === 'root' ? ['root'] : (selectedFolderId ? [selectedFolderId] : ['all'])}
-                  />
-                </Spin>
+              <Spin spinning={folderLoading}>
+                <Tree
+                  blockNode
+                  showIcon
+                  defaultExpandAll
+                  treeData={[
+                    {
+                      key: 'all',
+                      title: '全部图片',
+                      icon: <FolderOutlined />,
+                    },
+                    {
+                      key: 'root',
+                      title: '未分类 (根目录)',
+                      icon: <FolderOutlined />,
+                    },
+                    ...folderTreeData,
+                  ]}
+                  onSelect={handleSelectFolder}
+                  selectedKeys={
+                    selectedFolderId === 'root'
+                      ? ['root']
+                      : selectedFolderId
+                        ? [selectedFolderId]
+                        : ['all']
+                  }
+                />
+              </Spin>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <Spin spinning={referenceLoading}>
@@ -561,7 +738,30 @@ export function ReferenceLibrary({
                         <Card
                           hoverable
                           cover={
-                            <div className="h-36 overflow-hidden rounded-t-lg">
+                            <div className="h-36 overflow-hidden rounded-t-lg relative">
+                              {multiSelectMode && (
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: 8,
+                                    left: 8,
+                                    zIndex: 10,
+                                  }}
+                                  onClick={e => {
+                                    e.stopPropagation();
+                                    toggleImageSelection(item.characterName);
+                                  }}
+                                >
+                                  <Checkbox
+                                    checked={selectedImages.includes(item.characterName)}
+                                    style={{
+                                      background: 'rgba(255,255,255,0.9)',
+                                      borderRadius: 4,
+                                      padding: 4,
+                                    }}
+                                  />
+                                </div>
+                              )}
                               <Image
                                 src={api.getImageUrl(item.referenceImagePath || '')}
                                 alt={item.characterName}
@@ -760,12 +960,22 @@ export function ReferenceLibrary({
             <div style={{ marginTop: 8 }}>
               <TreeSelect
                 style={{ width: '100%' }}
-                value={uploadTargetFolderId !== null ? uploadTargetFolderId : (selectedFolderId === 'all' || selectedFolderId === 'root' ? '' : (selectedFolderId || ''))}
+                value={
+                  uploadTargetFolderId !== null
+                    ? uploadTargetFolderId
+                    : selectedFolderId === 'all' || selectedFolderId === 'root'
+                      ? ''
+                      : selectedFolderId || ''
+                }
                 dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
                 treeData={[{ value: '', title: '未分类 (根目录)' }, ...folderTreeSelectData]}
                 placeholder="请选择保存的文件夹（默认未分类）"
                 treeDefaultExpandAll
-                onChange={(newValue) => setUploadTargetFolderId(newValue === undefined || newValue === null ? '' : newValue)}
+                onChange={newValue =>
+                  setUploadTargetFolderId(
+                    newValue === undefined || newValue === null ? '' : newValue
+                  )
+                }
                 allowClear
               />
             </div>
@@ -821,6 +1031,62 @@ export function ReferenceLibrary({
               </label>
             </div>
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title="批量移动到文件夹"
+        open={batchMoveModalVisible}
+        onCancel={() => setBatchMoveModalVisible(false)}
+        footer={null}
+      >
+        <List
+          bordered
+          dataSource={[{ id: '', name: '未分类 (根目录)', parentId: null }, ...folders]}
+          renderItem={item => (
+            <List.Item
+              style={{ cursor: 'pointer' }}
+              onClick={() => handleBatchMove(item.id || undefined)}
+            >
+              <FolderOutlined /> {item.name}
+            </List.Item>
+          )}
+        />
+      </Modal>
+
+      <Modal
+        title="批量添加标签"
+        open={batchAddTagsModalVisible}
+        onCancel={() => {
+          setBatchAddTagsModalVisible(false);
+          setBatchTags('');
+        }}
+        onOk={handleBatchAddTags}
+        okText="添加"
+      >
+        <p>为选中的 {selectedImages.length} 张参考图添加标签：</p>
+        <Input
+          placeholder="输入标签，多个用逗号分隔（如：可爱,帅气）"
+          value={batchTags}
+          onChange={e => setBatchTags(e.target.value)}
+          onPressEnter={handleBatchAddTags}
+        />
+        <div className="mt-2">
+          <Text type="secondary">预设标签：</Text>
+          {tagOptions.slice(0, 8).map(opt => (
+            <Tag
+              key={opt.value}
+              className="cursor-pointer ml-1"
+              onClick={() => {
+                const currentTags = batchTags ? batchTags.split(',').map(t => t.trim()) : [];
+                if (!currentTags.includes(opt.value)) {
+                  setBatchTags(currentTags.length > 0 ? `${batchTags},${opt.value}` : opt.value);
+                }
+              }}
+            >
+              {opt.label}
+            </Tag>
+          ))}
         </div>
       </Modal>
     </>

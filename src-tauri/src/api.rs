@@ -340,6 +340,7 @@ async fn api_generate_image(
                 success: false,
                 images: vec![],
                 error: Some(e),
+                notice: None,
                 task_id: String::new(),
             }
         }

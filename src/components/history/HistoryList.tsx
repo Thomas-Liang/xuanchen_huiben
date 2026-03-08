@@ -22,6 +22,7 @@ import {
   Form,
   InputNumber,
   Switch,
+  message,
 } from 'antd';
 import {
   DeleteOutlined,
@@ -30,6 +31,7 @@ import {
   SearchOutlined,
   RedoOutlined,
   EditOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getHistory, deleteHistory, clearHistory } from '../../api';
@@ -79,6 +81,7 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
     null,
   ]);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  const [exporting, setExporting] = useState(false);
 
   const getDateRange = (filter: QuickFilter): [string, string] | null => {
     const now = dayjs();
@@ -121,6 +124,7 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
       setCurrentPage(page);
     } catch (error) {
       console.error('加载历史记录失败:', error);
+      message.error(`加载历史记录失败: ${String(error)}`);
     } finally {
       setLoading(false);
     }
@@ -185,6 +189,118 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
     setDateRange(dates || [null, null]);
     if (dates) {
       setQuickFilter('all');
+    }
+  };
+
+  const getCurrentFilter = () => {
+    const range = getDateRange(quickFilter);
+    return {
+      model: filterModel,
+      promptKeyword: searchKeyword.trim() || undefined,
+      startDate: range ? range[0] : dateRange[0]?.toISOString() || undefined,
+      endDate: range ? range[1] : dateRange[1]?.toISOString() || undefined,
+    };
+  };
+
+  const fetchAllFilteredHistory = async () => {
+    const allItems: GenerationHistory[] = [];
+    const filter = getCurrentFilter();
+    let page = 0;
+    const fetchSize = 200;
+    while (true) {
+      const result = await getHistory(page, fetchSize, filter);
+      allItems.push(...result.items);
+      if (allItems.length >= result.total || result.items.length === 0) break;
+      page += 1;
+    }
+    return allItems;
+  };
+
+  const toMarkdown = (items: GenerationHistory[]) => {
+    const lines: string[] = [];
+    lines.push('# 生成历史导出');
+    lines.push('');
+    lines.push(`导出时间: ${new Date().toLocaleString('zh-CN')}`);
+    lines.push(`记录数: ${items.length}`);
+    lines.push('');
+    for (const item of items) {
+      lines.push(`## ${item.id}`);
+      lines.push('');
+      lines.push(`- 时间: ${new Date(item.created_at).toLocaleString('zh-CN')}`);
+      lines.push(`- 模型: ${item.model}`);
+      lines.push(`- 状态: ${item.status}`);
+      lines.push(`- 图片数: ${item.images?.length || 0}`);
+      lines.push(`- 角色: ${item.characters?.join(', ') || '无'}`);
+      lines.push('');
+      lines.push('### 提示词');
+      lines.push('');
+      lines.push(item.prompt || '');
+      lines.push('');
+      lines.push('### 参数');
+      lines.push('');
+      lines.push('```json');
+      lines.push(JSON.stringify(item.params || {}, null, 2));
+      lines.push('```');
+      lines.push('');
+    }
+    return lines.join('\n');
+  };
+
+  const downloadText = (content: string, fileName: string) => {
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const saveExportFile = async (content: string, suggestedName: string, ext: 'json' | 'md') => {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const filePath = await save({
+        defaultPath: suggestedName,
+        filters: [
+          {
+            name: ext === 'json' ? 'JSON' : 'Markdown',
+            extensions: [ext],
+          },
+        ],
+      });
+      if (!filePath) return false;
+
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('save_text_to_file', { content, filePath });
+      return true;
+    } catch {
+      downloadText(content, suggestedName);
+      return true;
+    }
+  };
+
+  const handleExport = async (format: 'json' | 'md') => {
+    setExporting(true);
+    try {
+      const items = await fetchAllFilteredHistory();
+      if (items.length === 0) {
+        message.warning('当前筛选条件下没有可导出的历史记录');
+        return;
+      }
+      const now = dayjs().format('YYYYMMDD_HHmmss');
+      const fileName = `history_export_${now}.${format}`;
+      const content =
+        format === 'json' ? JSON.stringify(items, null, 2) : toMarkdown(items);
+      const ok = await saveExportFile(content, fileName, format);
+      if (ok) {
+        message.success(`历史记录已导出为 ${format.toUpperCase()}`);
+      }
+    } catch (error) {
+      message.error(`导出失败: ${String(error)}`);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -337,17 +453,25 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
           key="footer"
           style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}
         >
-          <Popconfirm
-            title="确认清空"
-            description="确定要清空所有历史记录吗？此操作不可恢复。"
-            onConfirm={handleClear}
-            okText="确定"
-            cancelText="取消"
-          >
-            <Button danger icon={<ClearOutlined />}>
-              清空全部
+          <Space>
+            <Popconfirm
+              title="确认清空"
+              description="确定要清空所有历史记录吗？此操作不可恢复。"
+              onConfirm={handleClear}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button danger icon={<ClearOutlined />}>
+                清空全部
+              </Button>
+            </Popconfirm>
+            <Button icon={<DownloadOutlined />} onClick={() => handleExport('json')} loading={exporting}>
+              导出JSON
             </Button>
-          </Popconfirm>
+            <Button icon={<DownloadOutlined />} onClick={() => handleExport('md')} loading={exporting}>
+              导出MD
+            </Button>
+          </Space>
           <Pagination
             current={currentPage}
             pageSize={pageSize}

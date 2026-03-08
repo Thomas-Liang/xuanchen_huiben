@@ -638,3 +638,80 @@ pub fn load_folders_from_file() {
         }
     }
 }
+
+#[tauri::command]
+pub fn batch_delete_references(character_names: Vec<String>) -> Result<bool, String> {
+    let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
+
+    for name in &character_names {
+        if let Some(binding) = bindings.get(name) {
+            if let Some(ref path) = binding.reference_image_path {
+                let _ = fs::remove_file(path);
+            }
+        }
+        bindings.remove(name);
+    }
+
+    save_bindings_to_file(&bindings)?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn batch_move_to_folder(
+    character_names: Vec<String>,
+    folder_id: Option<String>,
+) -> Result<bool, String> {
+    let mut folders = FOLDERS.lock().map_err(|e| e.to_string())?;
+
+    if let Some(ref fid) = folder_id {
+        if !folders.contains_key(fid) {
+            return Err("目标文件夹不存在".to_string());
+        }
+    }
+    drop(folders);
+
+    let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
+
+    for name in &character_names {
+        if let Some(binding) = bindings.get_mut(name) {
+            binding.folder_id = folder_id.clone();
+        }
+    }
+
+    save_bindings_to_file(&bindings)?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn batch_add_tags(character_names: Vec<String>, tags: Vec<String>) -> Result<bool, String> {
+    let tags_to_save;
+    {
+        let mut tag_store = REFERENCE_TAGS.lock().map_err(|e| e.to_string())?;
+
+        for name in &character_names {
+            let entry = tag_store.entry(name.clone()).or_insert_with(Vec::new);
+            for tag in &tags {
+                if !entry.contains(tag) {
+                    entry.push(tag.clone());
+                }
+            }
+        }
+
+        tags_to_save = tag_store.clone();
+    }
+
+    save_tags_to_file(&tags_to_save)?;
+
+    let mut bindings = CHARACTER_BINDINGS.lock().map_err(|e| e.to_string())?;
+    for name in &character_names {
+        if let Some(binding) = bindings.get_mut(name) {
+            if let Some(t) = tags_to_save.get(name) {
+                binding.tags = t.clone();
+            }
+        }
+    }
+
+    Ok(true)
+}

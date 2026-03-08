@@ -52,33 +52,44 @@ export function ImageResult({
       </div>
 
       {generationResult.success ? (
-        <Row gutter={16}>
-          {generationResult.images.map((img, idx) => (
-            <Col key={`gen-img-${idx}`} span={12}>
-              <Image
-                src={img}
-                alt={`生成图片 ${idx + 1}`}
-                className="w-full rounded-lg"
-                preview={{
-                  mask: (
-                    <div className="text-sm">
-                      <DownloadOutlined className="mr-1" />
-                      点击放大
-                    </div>
-                  ),
-                }}
-              />
-              <Button
-                type="link"
-                icon={<DownloadOutlined />}
-                onClick={() => onSaveImage(img)}
-                className="mt-2"
-              >
-                保存到本地
-              </Button>
-            </Col>
-          ))}
-        </Row>
+        <>
+          {generationResult.notice && (
+            <Alert
+              message="已自动处理请求异常"
+              description={generationResult.notice}
+              type="warning"
+              showIcon
+              className="mb-3"
+            />
+          )}
+          <Row gutter={16}>
+            {generationResult.images.map((img, idx) => (
+              <Col key={`gen-img-${idx}`} span={12}>
+                <Image
+                  src={img}
+                  alt={`生成图片 ${idx + 1}`}
+                  className="w-full rounded-lg"
+                  preview={{
+                    mask: (
+                      <div className="text-sm">
+                        <DownloadOutlined className="mr-1" />
+                        点击放大
+                      </div>
+                    ),
+                  }}
+                />
+                <Button
+                  type="link"
+                  icon={<DownloadOutlined />}
+                  onClick={() => onSaveImage(img)}
+                  className="mt-2"
+                >
+                  保存到本地
+                </Button>
+              </Col>
+            ))}
+          </Row>
+        </>
       ) : (
         <Alert message="生成失败" description={generationResult.error} type="error" showIcon />
       )}

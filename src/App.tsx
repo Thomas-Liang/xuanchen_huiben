@@ -28,9 +28,14 @@ import {
   Steps,
   Checkbox,
   Dropdown,
+  Popconfirm,
+  Tooltip,
 } from 'antd';
 import {
   PlayCircleOutlined,
+  AreaChartOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
   UserOutlined,
   AppstoreOutlined,
   RobotOutlined,
@@ -40,6 +45,7 @@ import {
   DownloadOutlined,
   QuestionCircleOutlined,
   PictureOutlined,
+  FileTextOutlined,
   EyeOutlined,
   LinkOutlined,
   SunOutlined,
@@ -61,6 +67,8 @@ import { SlideUp, FadeIn, ScaleIn } from './theme/animations';
 import { Toolbar } from './components/Toolbar';
 import { HistoryList } from './components/history';
 import { ReferenceLibrary } from './components/library';
+import PromptTemplateModal from './components/templates';
+import dayjs from 'dayjs';
 import './App.css';
 
 const { Header, Content, Sider } = Layout;
@@ -98,6 +106,8 @@ function MainApp() {
   const { resolvedTheme, setMode } = useTheme();
   const [currentPage, setCurrentPage] = useState('workspace');
   const [prompt, setPrompt] = useState('');
+  const [promptHistories, setPromptHistories] = useState<api.PromptHistoryItem[]>([]);
+  const [promptHistorySearch, setPromptHistorySearch] = useState('');
   const [parsedResult, setParsedResult] = useState<ParsedPrompt | null>(null);
   const [loading, setLoading] = useState(false);
   const [bindingModalVisible, setBindingModalVisible] = useState(false);
@@ -129,6 +139,7 @@ function MainApp() {
   const [helpModalVisible, setHelpModalVisible] = useState(false);
   const [referenceModalVisible, setReferenceModalVisible] = useState(false);
   const [historyModalVisible, setHistoryModalVisible] = useState(false);
+  const [templateModalVisible, setTemplateModalVisible] = useState(false);
   const [referenceImages, setReferenceImages] = useState<CharacterBinding[]>([]);
   const [referenceLoading, setReferenceLoading] = useState(false);
   const [referenceFilterType, setReferenceFilterType] = useState<string>('');
@@ -158,12 +169,127 @@ function MainApp() {
     'parallel'
   );
   const [failStrategy, setFailStrategy] = useState<'continue' | 'stop'>('continue');
+  const [nowTime, setNowTime] = useState(() => dayjs());
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardStats, setDashboardStats] = useState({
+    todayTotal: 0,
+    todaySuccess: 0,
+    todayFailed: 0,
+    latestFailedPrompt: '',
+    latestFailedAt: '',
+  });
 
   useEffect(() => {
     console.log('App loaded, checking Tauri...');
     loadApiConfig();
     loadGenerationConfig();
+    loadPromptHistories();
+    loadDashboardStats();
   }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTime(dayjs());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const loadDashboardStats = async () => {
+    setDashboardLoading(true);
+    try {
+      const startDate = dayjs().startOf('day').toISOString();
+      const endDate = dayjs().endOf('day').toISOString();
+      const allItems: any[] = [];
+      let page = 0;
+      const pageSize = 200;
+
+      while (true) {
+        const result = await api.getHistory(page, pageSize, { startDate, endDate });
+        allItems.push(...result.items);
+        if (allItems.length >= result.total || result.items.length === 0) break;
+        page += 1;
+      }
+
+      const todayTotal = allItems.length;
+      const todaySuccess = allItems.filter(item => item.status === 'completed').length;
+      const todayFailed = allItems.filter(item => item.status === 'failed').length;
+      const latestFailed = allItems.find(item => item.status === 'failed');
+
+      setDashboardStats({
+        todayTotal,
+        todaySuccess,
+        todayFailed,
+        latestFailedPrompt: latestFailed?.prompt || '',
+        latestFailedAt: latestFailed?.created_at || '',
+      });
+    } catch (error) {
+      console.error('加载首页概览失败:', error);
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
+  const loadPromptHistories = async () => {
+    try {
+      const items = await api.getPromptHistory(20);
+      setPromptHistories(items);
+    } catch (error) {
+      console.error('加载提示词历史失败:', error);
+    }
+  };
+
+  const savePromptToHistory = async (text: string) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+    try {
+      await api.addPromptHistory(normalized);
+      await loadPromptHistories();
+    } catch (error) {
+      console.error('保存提示词历史失败:', error);
+    }
+  };
+
+  const toFriendlyGenerateError = (raw: unknown) => {
+    const text = String(raw || '');
+    if (
+      text.includes('unexpected end of JSON input') ||
+      text.includes('400 Bad Request') ||
+      text.includes('413')
+    ) {
+      return '请求体被网关拒绝或截断，请减少参考图数量/大小后重试。系统已尝试自动降级。';
+    }
+    if (text.includes('API Key') || text.includes('api key')) {
+      return 'API Key 无效或未配置，请先在 API 配置中检查。';
+    }
+    return text;
+  };
+
+  const filteredPromptHistories = useMemo(() => {
+    const keyword = promptHistorySearch.trim().toLowerCase();
+    if (!keyword) return promptHistories;
+    return promptHistories.filter(item => item.prompt.toLowerCase().includes(keyword));
+  }, [promptHistories, promptHistorySearch]);
+
+  const handleDeletePromptHistory = async (id: string) => {
+    try {
+      await api.deletePromptHistory(id);
+      await loadPromptHistories();
+      message.success('已删除该条提示词历史');
+    } catch (error) {
+      message.error(`删除失败: ${String(error)}`);
+    }
+  };
+
+  const handleClearPromptHistory = async () => {
+    try {
+      await api.clearPromptHistory();
+      setPromptHistorySearch('');
+      await loadPromptHistories();
+      message.success('提示词历史已清空');
+    } catch (error) {
+      message.error(`清空失败: ${String(error)}`);
+    }
+  };
 
   const loadApiConfig = async () => {
     try {
@@ -238,6 +364,8 @@ function MainApp() {
       return;
     }
 
+    void savePromptToHistory(prompt);
+
     setLoading(true);
     try {
       const result = await api.parsePrompt(prompt);
@@ -272,6 +400,8 @@ function MainApp() {
       message.warning('请输入提示词');
       return;
     }
+
+    void savePromptToHistory(prompt);
 
     console.log('[BatchSplit] params:', { prompt, batchDelimiter, batchAutoDetect });
     setBatchSplitLoading(true);
@@ -363,6 +493,12 @@ function MainApp() {
 
         if (!batchMode) {
           setGenerationResult(result);
+          if (result.notice) {
+            message.warning(result.notice);
+          }
+          if (!result.success && result.error) {
+            message.error(`生成失败: ${toFriendlyGenerateError(result.error)}`);
+          }
         }
 
         console.log(
@@ -396,6 +532,7 @@ function MainApp() {
             updated_at: new Date().toISOString(),
           });
           console.log('[历史记录保存成功]');
+          void loadDashboardStats();
         } catch (e) {
           console.error('[保存历史记录失败]:', e);
         }
@@ -412,11 +549,14 @@ function MainApp() {
         });
       } catch (err) {
         if (!batchMode) {
+          const friendlyError = toFriendlyGenerateError(err);
           setGenerationResult({
             success: false,
             images: [],
-            error: err instanceof Error ? err.message : String(err),
+            error: friendlyError,
           });
+          message.error(`生成失败: ${friendlyError}`);
+          void loadDashboardStats();
         }
         setBatchProgress((prev: any) => {
           if (!prev) return prev;
@@ -775,6 +915,27 @@ function MainApp() {
     if (page === 'history') {
       setHistoryModalVisible(true);
     }
+    if (page === 'templates') {
+      setTemplateModalVisible(true);
+    }
+  };
+
+  const successRate =
+    dashboardStats.todayTotal > 0
+      ? Number(((dashboardStats.todaySuccess / dashboardStats.todayTotal) * 100).toFixed(1))
+      : 0;
+  const weekdayMap = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const calendarLabel = `${nowTime.format('MM月DD日')} ${weekdayMap[nowTime.day()]}`;
+  const calendarClock = nowTime.format('HH:mm:ss');
+  const promptLimit = batchMode ? 2000 : 500;
+  const promptUsageRatio = promptLimit > 0 ? prompt.length / promptLimit : 0;
+  const promptCountColor =
+    promptUsageRatio >= 0.9 ? '#ef4444' : promptUsageRatio >= 0.7 ? '#f59e0b' : '#6366f1';
+  const formatTimeSafe = (value: string) => {
+    if (!value) return '--';
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return '--';
+    return d.toLocaleTimeString('zh-CN');
   };
 
   return (
@@ -823,6 +984,14 @@ function MainApp() {
               </Button>
               <Button
                 type="text"
+                icon={<FileTextOutlined />}
+                onClick={() => setTemplateModalVisible(true)}
+                style={{ color: '#fff', height: 36 }}
+              >
+                模板库
+              </Button>
+              <Button
+                type="text"
                 icon={<QuestionCircleOutlined />}
                 onClick={() => setHelpModalVisible(true)}
                 style={{ color: '#fff', height: 36 }}
@@ -862,12 +1031,223 @@ function MainApp() {
           </Header>
           <Content className="app-content">
             <div className="main-container">
+              <SlideUp delay={0.05}>
+                <Card
+                  className="result-card dashboard-card"
+                  variant="borderless"
+                  style={{
+                    marginBottom: 12,
+                    paddingTop: 6,
+                    paddingBottom: 6,
+                    background:
+                      resolvedTheme === 'dark'
+                        ? 'linear-gradient(135deg, rgba(30,41,59,0.95), rgba(15,23,42,0.95))'
+                        : 'linear-gradient(135deg, rgba(99,102,241,0.06), rgba(6,182,212,0.06))',
+                  }}
+                >
+                  <Spin spinning={dashboardLoading}>
+                    <div
+                      style={{
+                        marginTop: 2,
+                        paddingBottom: 2,
+                        display: 'grid',
+                        gridTemplateColumns:
+                          'minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.6fr)',
+                        gap: 16,
+                        width: '100%',
+                      }}
+                    >
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: '14px 16px',
+                          minHeight: 92,
+                          minWidth: 0,
+                          background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
+                          border:
+                            resolvedTheme === 'dark'
+                              ? '1px solid rgba(148,163,184,0.25)'
+                              : '1px solid #e5e7eb',
+                          boxShadow:
+                            resolvedTheme === 'dark'
+                              ? 'none'
+                              : '0 1px 3px rgba(15,23,42,0.06)',
+                        }}
+                      >
+                        <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                          <Space size={8} align="center">
+                            <AreaChartOutlined style={{ color: '#6366f1', fontSize: 14 }} />
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              今日概览
+                            </Text>
+                          </Space>
+                          <Text style={{ fontSize: 13, color: resolvedTheme === 'dark' ? '#cbd5e1' : '#475569' }}>
+                            {calendarLabel}
+                          </Text>
+                          <Text
+                            style={{
+                              marginTop: -2,
+                              fontSize: 24,
+                              lineHeight: 1,
+                              fontWeight: 700,
+                              color: '#6366f1',
+                              fontVariantNumeric: 'tabular-nums',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {calendarClock}
+                          </Text>
+                        </Space>
+                      </div>
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: '14px 16px',
+                          minHeight: 92,
+                          minWidth: 0,
+                          background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
+                          border:
+                            resolvedTheme === 'dark'
+                              ? '1px solid rgba(148,163,184,0.25)'
+                              : '1px solid #e5e7eb',
+                          boxShadow:
+                            resolvedTheme === 'dark'
+                              ? 'none'
+                              : '0 1px 3px rgba(15,23,42,0.06)',
+                        }}
+                      >
+                        <Space size={8} align="start">
+                          <AreaChartOutlined style={{ color: '#6366f1', fontSize: 16 }} />
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              生成总数
+                            </Text>
+                            <div style={{ fontSize: 32, lineHeight: 1, fontWeight: 700 }}>
+                              {dashboardStats.todayTotal}
+                            </div>
+                          </div>
+                        </Space>
+                      </div>
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: '14px 16px',
+                          minHeight: 92,
+                          minWidth: 0,
+                          background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
+                          border:
+                            resolvedTheme === 'dark'
+                              ? '1px solid rgba(148,163,184,0.25)'
+                              : '1px solid #e5e7eb',
+                          boxShadow:
+                            resolvedTheme === 'dark'
+                              ? 'none'
+                              : '0 1px 3px rgba(15,23,42,0.06)',
+                        }}
+                      >
+                        <Space size={8} align="start">
+                          <CheckCircleOutlined style={{ color: '#10b981', fontSize: 16 }} />
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              成功率
+                            </Text>
+                            <div style={{ fontSize: 32, lineHeight: 1, fontWeight: 700, color: '#10b981' }}>
+                              {successRate}%
+                            </div>
+                          </div>
+                        </Space>
+                      </div>
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: '14px 16px',
+                          minHeight: 92,
+                          minWidth: 0,
+                          background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
+                          border:
+                            resolvedTheme === 'dark'
+                              ? '1px solid rgba(148,163,184,0.25)'
+                              : '1px solid #e5e7eb',
+                          boxShadow:
+                            resolvedTheme === 'dark'
+                              ? 'none'
+                              : '0 1px 3px rgba(15,23,42,0.06)',
+                        }}
+                      >
+                        <Space size={8} align="start">
+                          <CloseCircleOutlined style={{ color: '#ef4444', fontSize: 16 }} />
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 12 }}>
+                              失败数
+                            </Text>
+                            <div style={{ fontSize: 32, lineHeight: 1, fontWeight: 700, color: '#ef4444' }}>
+                              {dashboardStats.todayFailed}
+                            </div>
+                          </div>
+                        </Space>
+                      </div>
+                      <div
+                        style={{
+                          borderRadius: 12,
+                          padding: '14px 16px',
+                          minHeight: 92,
+                          minWidth: 0,
+                          background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
+                          border:
+                            resolvedTheme === 'dark'
+                              ? '1px solid rgba(148,163,184,0.25)'
+                              : '1px solid #e5e7eb',
+                          boxShadow:
+                            resolvedTheme === 'dark'
+                              ? 'none'
+                              : '0 1px 3px rgba(15,23,42,0.06)',
+                        }}
+                      >
+                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            最近失败
+                          </Text>
+                          <Text
+                            ellipsis={{ tooltip: true }}
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 600,
+                              color: resolvedTheme === 'dark' ? '#e2e8f0' : '#1f2937',
+                            }}
+                          >
+                            {dashboardStats.latestFailedPrompt
+                              ? `${dashboardStats.latestFailedPrompt}（${formatTimeSafe(
+                                  dashboardStats.latestFailedAt
+                                )}）`
+                              : '暂无'}
+                          </Text>
+                        </Space>
+                      </div>
+                    </div>
+
+                    
+                  </Spin>
+                </Card>
+              </SlideUp>
               <SlideUp delay={0.1}>
                 <Card className="prompt-card" variant="borderless">
                   <div className="card-header" style={{ justifyContent: 'space-between' }}>
-                    <Title level={5} className="card-title">
-                      输入提示词
-                    </Title>
+                    <Space size={8} align="center">
+                      <Title level={5} className="card-title">
+                        输入提示词
+                      </Title>
+                      <Tooltip title="当前提示词长度 / 最大长度">
+                        <Text
+                          style={{
+                            fontSize: 12,
+                            color: promptCountColor,
+                            fontWeight: 600,
+                          }}
+                        >
+                          ({prompt.length} / {promptLimit})
+                        </Text>
+                      </Tooltip>
+                    </Space>
                     <Space size="middle">
                       <span style={{ color: '#6366f1', fontWeight: 500 }}>
                         {batchMode ? '批量模式' : '单图模式'}
@@ -929,9 +1309,80 @@ function MainApp() {
                     </div>
                   )}
 
+                  <div style={{ marginBottom: 12 }}>
+                    <Space.Compact style={{ width: '100%' }}>
+                      <Select
+                        allowClear
+                        showSearch
+                        placeholder="提示词历史（可一键复用）"
+                        style={{ width: '100%' }}
+                        value={undefined}
+                        searchValue={promptHistorySearch}
+                        onSearch={setPromptHistorySearch}
+                        optionFilterProp="label"
+                        options={filteredPromptHistories.map(item => ({
+                          value: item.prompt,
+                          label:
+                            item.prompt.length > 60
+                              ? `${item.prompt.slice(0, 60)}...`
+                              : item.prompt,
+                        }))}
+                        onSelect={value => {
+                          if (typeof value === 'string') {
+                            setPrompt(value);
+                            setPromptHistorySearch('');
+                          }
+                        }}
+                      />
+                      <Button
+                        onClick={() => {
+                          if (promptHistories.length > 0) {
+                            setPrompt(promptHistories[0].prompt);
+                          } else {
+                            message.warning('暂无历史提示词');
+                          }
+                        }}
+                      >
+                        最近一条
+                      </Button>
+                      <Button
+                        danger
+                        disabled={filteredPromptHistories.length === 0}
+                        onClick={() => {
+                          const target = filteredPromptHistories[0];
+                          if (target) {
+                            void handleDeletePromptHistory(target.id);
+                          }
+                        }}
+                      >
+                        删首条
+                      </Button>
+                      <Popconfirm
+                        title="确认清空提示词历史？"
+                        description="此操作不可恢复"
+                        onConfirm={handleClearPromptHistory}
+                        okText="确定"
+                        cancelText="取消"
+                      >
+                        <Button danger disabled={promptHistories.length === 0}>
+                          清空
+                        </Button>
+                      </Popconfirm>
+                    </Space.Compact>
+                  </div>
+
                   <TextArea
                     value={prompt}
                     onChange={e => setPrompt(e.target.value)}
+                    onPressEnter={e => {
+                      if (prompt.trim()) return;
+                      const first = filteredPromptHistories[0];
+                      if (first) {
+                        e.preventDefault();
+                        setPrompt(first.prompt);
+                        message.success('已回填最近提示词');
+                      }
+                    }}
                     placeholder={
                       batchMode
                         ? '输入多个场景，用分隔符分开，如：场景1描述 | 场景2描述 | 场景3描述'
@@ -940,7 +1391,7 @@ function MainApp() {
                     rows={batchMode ? 6 : 4}
                     className="prompt-input"
                     maxLength={batchMode ? 2000 : 500}
-                    showCount
+                    showCount={false}
                   />
                   <div className="prompt-actions">
                     {batchMode ? (
@@ -1993,6 +2444,23 @@ function MainApp() {
                         在森林里@小明 正在跑步
                       </Text>
                     </p>
+                    <p>
+                      <Text strong style={{ color: '#10b981' }}>
+                        提示词历史：
+                      </Text>{' '}
+                      点击<Text style={{ color: '#6366f1' }}>「开始解析」</Text>或
+                      <Text style={{ color: '#6366f1' }}>「拆分场景」</Text>后会自动保存提示词，
+                      可通过输入框上方的<Text style={{ color: '#6366f1' }}>「提示词历史」</Text>
+                      下拉一键复用；支持删首条、清空与搜索。
+                    </p>
+                    <p>
+                      <Text strong style={{ color: '#8b5cf6' }}>
+                        长度提示：
+                      </Text>{' '}
+                      输入标题右侧会显示
+                      <Text style={{ color: '#6366f1' }}>「（当前长度 / 最大长度）」</Text>
+                      ，并按占比自动变色（紫/橙/红）；悬浮可查看说明。
+                    </p>
                   </div>
                 ),
               },
@@ -2056,6 +2524,18 @@ function MainApp() {
                       <li>按标签筛选</li>
                       <li>为参考图添加/移除标签</li>
                       <li>删除不需要的参考图</li>
+                      <li>
+                        <Text strong style={{ color: '#ec4899' }}>
+                          批量操作：
+                        </Text>{' '}
+                        点击"多选模式"按钮进入批量操作模式，可批量移动、批量删除、批量添加标签
+                      </li>
+                      <li>
+                        <Text strong style={{ color: '#f59e0b' }}>
+                          提示词模板：
+                        </Text>{' '}
+                        点击"模板库"按钮可创建、使用提示词模板，支持变量（如 {'{角色}'}）和次数统计
+                      </li>
                     </ul>
                     <p>
                       <Text strong style={{ color: '#ef4444' }}>
@@ -2170,6 +2650,22 @@ function MainApp() {
             ]}
           />
 
+          <Alert
+            message="📊 今日概览与历史导出"
+            description={
+              <div style={{ color: '#666' }}>
+                <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                  <li>首页顶部“今日概览”会实时显示日期时间、生成总数、成功率、失败数、最近失败。</li>
+                  <li>打开“生成历史记录”弹窗后，可在底部左侧使用“导出JSON / 导出MD”。</li>
+                  <li>导出范围为当前筛选条件下的全部匹配记录（不只是当前页）。</li>
+                </ul>
+              </div>
+            }
+            type="info"
+            showIcon
+            style={{ marginTop: 12 }}
+          />
+
           <Divider />
 
           <Alert
@@ -2222,6 +2718,15 @@ function MainApp() {
         onClose={() => setHistoryModalVisible(false)}
         onApplyParams={handleApplyHistoryParams}
         onRegenerate={handleRegenerateHistory}
+      />
+
+      <PromptTemplateModal
+        visible={templateModalVisible}
+        onClose={() => setTemplateModalVisible(false)}
+        onSelectTemplate={content => {
+          setPrompt(content);
+          setParsedResult(null);
+        }}
       />
     </ConfigProvider>
   );

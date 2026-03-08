@@ -292,30 +292,30 @@ export async function saveImageToFile(imageUrl: string, filePath: string): Promi
 }
 
 export async function saveImageDialog(imageUrl: string): Promise<string | null> {
-  // Always try Tauri dialog first
-  try {
-    const { save } = await import('@tauri-apps/plugin-dialog');
-    const { invoke } = await import('@tauri-apps/api/core');
+  if (isTauri()) {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const { invoke } = await import('@tauri-apps/api/core');
 
-    // Generate default filename
-    const defaultName = `image_${Date.now()}.png`;
+      // Generate default filename
+      const defaultName = `image_${Date.now()}.png`;
 
-    const filePath = await save({
-      defaultPath: defaultName,
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
-    });
+      const filePath = await save({
+        defaultPath: defaultName,
+        filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+      });
 
-    if (filePath) {
-      await invoke('save_image_to_file', { imageUrl, filePath });
-      return filePath;
+      if (filePath) {
+        await invoke('save_image_to_file', { imageUrl, filePath });
+        return filePath;
+      }
+      return null;
+    } catch (e) {
+      throw new Error(`Tauri保存失败: ${String(e)}`);
     }
-    return null;
-  } catch (e) {
-    // If Tauri is not available, use web fallback
-    console.log('Using web fallback for save dialog');
   }
 
-  // Web fallback: Use Blob to bypass cross-origin restrictions on 'download' attribute
+  // Web fallback: Use Blob to trigger browser download.
   try {
     let blob: Blob;
 
@@ -365,15 +365,7 @@ export async function saveImageDialog(imageUrl: string): Promise<string | null> 
     return '已开始下载';
   } catch (error) {
     console.error('Web download failed:', error);
-    // If blob fetch fails (e.g. CORS), try direct link as last resort
-    const link = document.createElement('a');
-    link.href = imageUrl;
-    link.target = '_blank';
-    link.setAttribute('download', '');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    return '尝试直接打开下载';
+    throw new Error(`Web下载失败: ${String(error)}`);
   }
 }
 
@@ -523,13 +515,24 @@ export async function getHistory(
     return invoke('get_history', {
       page,
       pageSize,
+      page_size: pageSize,
       model: filter?.model || null,
       promptKeyword: filter?.promptKeyword || null,
+      prompt_keyword: filter?.promptKeyword || null,
       startDate: filter?.startDate || null,
+      start_date: filter?.startDate || null,
       endDate: filter?.endDate || null,
+      end_date: filter?.endDate || null,
     });
   }
-  return fetchApi('/api/history/list', { page, pageSize, ...filter });
+  const params = new URLSearchParams();
+  params.set('page', String(page));
+  params.set('page_size', String(pageSize));
+  if (filter?.model) params.set('model', filter.model);
+  if (filter?.promptKeyword) params.set('prompt_keyword', filter.promptKeyword);
+  if (filter?.startDate) params.set('start_date', filter.startDate);
+  if (filter?.endDate) params.set('end_date', filter.endDate);
+  return fetchApi(`/api/history/list?${params.toString()}`);
 }
 
 export async function getHistoryById(id: string): Promise<{
@@ -622,4 +625,170 @@ export async function moveImageToFolder(
     return invoke('move_image_to_folder', { characterName, folderId: folderId || null });
   }
   return fetchApi('/api/folders/move-image', { characterName, folderId });
+}
+
+export async function batchDeleteReferences(characterNames: string[]): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('batch_delete_references', { characterNames });
+  }
+  return fetchApi('/api/reference-images/batch-delete', { characterNames });
+}
+
+export async function batchMoveToFolder(
+  characterNames: string[],
+  folderId?: string
+): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('batch_move_to_folder', { characterNames, folderId: folderId || null });
+  }
+  return fetchApi('/api/reference-images/batch-move', { characterNames, folderId });
+}
+
+export async function batchAddTags(characterNames: string[], tags: string[]): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('batch_add_tags', { characterNames, tags });
+  }
+  return fetchApi('/api/reference-images/batch-add-tags', { characterNames, tags });
+}
+
+// ==================== Prompt Template API (US-13) ====================
+
+export async function addPromptTemplate(template: {
+  name: string;
+  content: string;
+  category: string;
+}): Promise<{
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  variables: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('add_prompt_template', { template });
+  }
+  return fetchApi('/api/prompt-templates/add', template);
+}
+
+export async function getAllPromptTemplates(): Promise<
+  {
+    id: string;
+    name: string;
+    content: string;
+    category: string;
+    variables: string[];
+    usage_count: number;
+    created_at: string;
+    updated_at: string;
+  }[]
+> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_all_prompt_templates');
+  }
+  return fetchApi('/api/prompt-templates/list');
+}
+
+export async function getPromptTemplateById(id: string): Promise<{
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  variables: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+} | null> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_prompt_template_by_id', { id });
+  }
+  return fetchApi('/api/prompt-templates/get', { id });
+}
+
+export async function updatePromptTemplate(
+  id: string,
+  template: {
+    name: string;
+    content: string;
+    category: string;
+  }
+): Promise<{
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  variables: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('update_prompt_template', { id, template });
+  }
+  return fetchApi('/api/prompt-templates/update', { id, ...template });
+}
+
+export async function deletePromptTemplate(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_prompt_template', { id });
+  }
+  return fetchApi('/api/prompt-templates/delete', { id });
+}
+
+export async function incrementTemplateUsage(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('increment_template_usage', { id });
+  }
+  return fetchApi('/api/prompt-templates/increment-usage', { id });
+}
+
+export interface PromptHistoryItem {
+  id: string;
+  prompt: string;
+  use_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function addPromptHistory(prompt: string): Promise<PromptHistoryItem> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('add_prompt_history', { prompt });
+  }
+  return fetchApi('/api/prompt-history/add', { prompt });
+}
+
+export async function getPromptHistory(limit: number = 20): Promise<PromptHistoryItem[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_prompt_history', { limit });
+  }
+  return fetchApi(`/api/prompt-history/list?limit=${limit}`);
+}
+
+export async function deletePromptHistory(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_prompt_history', { id });
+  }
+  return fetchApi('/api/prompt-history/delete', { id });
+}
+
+export async function clearPromptHistory(): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('clear_prompt_history');
+  }
+  return fetchApi('/api/prompt-history/clear');
 }

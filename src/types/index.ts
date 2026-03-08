@@ -57,6 +57,7 @@ export interface ImageGenerationResult {
   success: boolean;
   images: string[];
   error?: string;
+  notice?: string;
   taskId?: string;
 }
 
@@ -148,4 +149,15 @@ export interface GenerationHistory {
 export interface GenerationHistoryList {
   total: number;
   items: GenerationHistory[];
+}
+
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  variables: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
 }

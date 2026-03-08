@@ -57,6 +57,8 @@ pub struct ImageGenerationResult {
     pub success: bool,
     pub images: Vec<String>,
     pub error: Option<String>,
+    #[serde(alias = "notice")]
+    pub notice: Option<String>,
     #[serde(alias = "taskId", alias = "task_id")]
     pub task_id: String,
 }
@@ -367,14 +369,32 @@ pub async fn generate_image(
     
     let prompt = build_prompt_with_bindings(&params);
     
-    let result = match params.model.as_str() {
-        "seedream" => call_seedream_api(&model_config, &prompt, params.size, params.sequential_image_generation, params.response_format, params.watermark, final_images).await,
-        "banana_pro" => call_banana_pro_api(&model_config, &prompt, params.width, params.height, params.count, final_images).await,
+    let result: Result<(Vec<String>, Option<String>), String> = match params.model.as_str() {
+        "seedream" => call_seedream_api(
+            &model_config,
+            &prompt,
+            params.size,
+            params.sequential_image_generation,
+            params.response_format,
+            params.watermark,
+            final_images,
+        )
+        .await
+        .map(|images| (images, None)),
+        "banana_pro" => call_banana_pro_api(
+            &model_config,
+            &prompt,
+            params.width,
+            params.height,
+            params.count,
+            final_images,
+        )
+        .await,
         _ => Err("不支持的模型".to_string()),
     };
     
     match result {
-        Ok(images) => {
+        Ok((images, notice)) => {
             update_task_progress(&task_id, "completed", 100, "生成完成");
             
             {
@@ -387,6 +407,7 @@ pub async fn generate_image(
                 images,
                 task_id,
                 error: None,
+                notice,
             })
         }
         Err(e) => {
@@ -402,6 +423,7 @@ pub async fn generate_image(
                 images: vec![],
                 task_id,
                 error: Some(e),
+                notice: None,
             })
         }
     }
@@ -435,7 +457,7 @@ async fn call_banana_pro_api(
     height: u32,
     count: u32,
     images: Option<Vec<String>>,
-) -> Result<Vec<String>, String> {
+) -> Result<(Vec<String>, Option<String>), String> {
     let client = reqwest::Client::new();
     
     let aspect_ratio = calculate_aspect_ratio(width, height);
@@ -449,12 +471,18 @@ async fn call_banana_pro_api(
     
     eprintln!("[Banana Pro] Received images count: {:?}", images.as_ref().map(|v| v.len()));
     
-    // Build parts with optional reference images
+    // Build parts with optional reference images.
+    // Some upstream gateways have strict request-body limits. If we send too many
+    // or too-large base64 images, they may return JSON parse errors.
     let mut parts: Vec<serde_json::Value> = Vec::new();
+    let mut attached_image_count = 0usize;
+    let mut skipped_oversized_count = 0usize;
+    let max_ref_images = 2usize;
+    let max_base64_chars = 1_200_000usize;
     
     // Add reference images if any
     if let Some(ref imgs) = images {
-        for img in imgs {
+        for img in imgs.iter().take(max_ref_images) {
             let (img_data, mime_type) = if img.starts_with("data:") {
                 // Extract mime type and data from data URL
                 if img.starts_with("data:image/jpeg") || img.starts_with("data:image/jpg") {
@@ -468,12 +496,21 @@ async fn call_banana_pro_api(
             } else {
                 (img.clone(), "image/jpeg")
             };
+            if img_data.len() > max_base64_chars {
+                eprintln!(
+                    "[Banana Pro] Skip oversized reference image ({} chars)",
+                    img_data.len()
+                );
+                skipped_oversized_count += 1;
+                continue;
+            }
             parts.push(serde_json::json!({
                 "inlineData": {
                     "mimeType": mime_type,
                     "data": img_data
                 }
             }));
+            attached_image_count += 1;
         }
     }
     
@@ -498,9 +535,11 @@ async fn call_banana_pro_api(
 
     eprintln!("Banana Pro API request body: {:?}", request_body);
     
+    let normalized_base_url = config.base_url.trim_end_matches('/');
+    let encoded_key = urlencoding::encode(config.api_key.trim());
     let url = format!(
         "{}/v1beta/models/gemini-3.1-flash-image-preview:generateContent?key={}",
-        config.base_url, config.api_key
+        normalized_base_url, encoded_key
     );
     eprintln!("Banana Pro API URL: {}", url);
     
@@ -516,6 +555,79 @@ async fn call_banana_pro_api(
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         eprintln!("Banana Pro API error response: {}", text);
+
+        // If gateway fails to parse a large JSON body, retry once without images.
+        let is_gateway_body_error = status.as_u16() == 400 || status.as_u16() == 413;
+        let should_retry_without_images =
+            attached_image_count > 0
+                && (is_gateway_body_error
+                    || (status.is_server_error() && text.contains("unexpected end of JSON input")));
+
+        if should_retry_without_images {
+            eprintln!("[Banana Pro] Retrying request without reference images");
+            let fallback_body = serde_json::json!({
+                "contents": [{
+                    "role": "user",
+                    "parts": [{ "text": prompt }]
+                }],
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"],
+                    "imageConfig": {
+                        "aspectRatio": aspect_ratio,
+                        "imageSize": image_size
+                    }
+                }
+            });
+
+            let retry_response = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .json(&fallback_body)
+                .send()
+                .await
+                .map_err(|e| format!("重试请求失败: {}", e))?;
+
+            if !retry_response.status().is_success() {
+                let retry_status = retry_response.status();
+                let retry_text = retry_response.text().await.unwrap_or_default();
+                return Err(format!("API错误 {}: {}", retry_status, retry_text));
+            }
+
+            let retry_data: serde_json::Value =
+                retry_response.json().await.map_err(|e| e.to_string())?;
+
+            let retry_images: Vec<String> = retry_data["candidates"]
+                .as_array()
+                .and_then(|arr| {
+                    Some(
+                        arr.iter()
+                            .filter_map(|candidate| {
+                                candidate["content"]["parts"].as_array().and_then(|parts| {
+                                    parts.iter().find_map(|part| {
+                                        part["inlineData"]["data"].as_str().map(|s| {
+                                            let mime = part["inlineData"]["mimeType"]
+                                                .as_str()
+                                                .unwrap_or("image/png");
+                                            format!("data:{};base64,{}", mime, s)
+                                        })
+                                    })
+                                })
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .unwrap_or_default();
+
+            if retry_images.is_empty() {
+                return Err("未生成图片".to_string());
+            }
+
+            return Ok((
+                retry_images,
+                Some("参考图请求异常，已自动降级为无参考图重试成功".to_string()),
+            ));
+        }
+
         return Err(format!("API错误 {}: {}", status, text));
     }
     
@@ -551,8 +663,17 @@ async fn call_banana_pro_api(
     if images.is_empty() {
         return Err("未生成图片".to_string());
     }
-    
-    Ok(images)
+
+    let notice = if skipped_oversized_count > 0 {
+        Some(format!(
+            "有 {} 张参考图因体积过大被自动跳过",
+            skipped_oversized_count
+        ))
+    } else {
+        None
+    };
+
+    Ok((images, notice))
 }
 
 fn calculate_aspect_ratio(width: u32, height: u32) -> String {

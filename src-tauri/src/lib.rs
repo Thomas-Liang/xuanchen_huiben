@@ -4,12 +4,13 @@ mod storage;
 
 use api::create_api_router;
 use commands::character_binding::{
-    add_tag_to_reference, bind_character_reference, create_folder, delete_folder,
-    delete_reference_image, get_all_bindings, get_all_tags, get_bindings_for_prompt,
-    get_character_binding, get_folder_tree, get_folders, get_references_by_type,
-    get_reference_images, load_bindings_from_file, load_folders_from_file,
-    move_image_to_folder, remove_tag_from_reference, rename_folder, save_reference_image,
-    search_reference_images, unbind_character,
+    add_tag_to_reference, batch_add_tags, batch_delete_references, batch_move_to_folder,
+    bind_character_reference, create_folder, delete_folder, delete_reference_image,
+    get_all_bindings, get_all_tags, get_bindings_for_prompt, get_character_binding,
+    get_folder_tree, get_folders, get_references_by_type, get_reference_images,
+    load_bindings_from_file, load_folders_from_file, move_image_to_folder,
+    remove_tag_from_reference, rename_folder, save_reference_image, search_reference_images,
+    unbind_character,
 };
 use commands::image_generator::{
     generate_image, get_default_api_config, get_default_generation_config,
@@ -56,6 +57,12 @@ async fn save_image_to_file(image_url: String, file_path: String) -> Result<Stri
     } else {
         Err("Unsupported image format".to_string())
     }
+}
+
+#[tauri::command]
+fn save_text_to_file(content: String, file_path: String) -> Result<String, String> {
+    std::fs::write(&file_path, content).map_err(|e| e.to_string())?;
+    Ok(file_path)
 }
 
 // ==================== History Commands ====================
@@ -155,6 +162,63 @@ fn update_template(id: String, template: storage::CharacterTemplate) -> Result<s
 #[tauri::command]
 fn delete_template(id: String) -> Result<(), String> {
     storage::delete_template(&id)
+}
+
+// ==================== Prompt Template Commands (US-13) ====================
+
+#[tauri::command]
+fn add_prompt_template(
+    template: storage::PromptTemplatePayload,
+) -> Result<storage::PromptTemplate, String> {
+    storage::add_prompt_template(template)
+}
+
+#[tauri::command]
+fn get_all_prompt_templates() -> Result<Vec<storage::PromptTemplate>, String> {
+    storage::get_all_prompt_templates()
+}
+
+#[tauri::command]
+fn get_prompt_template_by_id(id: String) -> Result<Option<storage::PromptTemplate>, String> {
+    storage::get_prompt_template_by_id(&id)
+}
+
+#[tauri::command]
+fn update_prompt_template(
+    id: String,
+    template: storage::PromptTemplatePayload,
+) -> Result<storage::PromptTemplate, String> {
+    storage::update_prompt_template(&id, template)
+}
+
+#[tauri::command]
+fn delete_prompt_template(id: String) -> Result<(), String> {
+    storage::delete_prompt_template(&id)
+}
+
+#[tauri::command]
+fn increment_template_usage(id: String) -> Result<(), String> {
+    storage::increment_template_usage(&id)
+}
+
+#[tauri::command]
+fn add_prompt_history(prompt: String) -> Result<storage::PromptHistoryItem, String> {
+    storage::add_prompt_history(prompt)
+}
+
+#[tauri::command]
+fn get_prompt_history(limit: Option<usize>) -> Result<Vec<storage::PromptHistoryItem>, String> {
+    storage::get_prompt_history(limit)
+}
+
+#[tauri::command]
+fn delete_prompt_history(id: String) -> Result<(), String> {
+    storage::delete_prompt_history(&id)
+}
+
+#[tauri::command]
+fn clear_prompt_history() -> Result<(), String> {
+    storage::clear_prompt_history()
 }
 
 // ==================== Settings Commands ====================
@@ -300,6 +364,7 @@ pub async fn main() {
             load_generation_config,
             get_default_generation_config,
             save_image_to_file,
+            save_text_to_file,
             // History CRUD
             add_history,
             get_history,
@@ -329,6 +394,20 @@ pub async fn main() {
             get_folders,
             get_folder_tree,
             move_image_to_folder,
+            batch_delete_references,
+            batch_move_to_folder,
+            batch_add_tags,
+            // Prompt Template CRUD
+            add_prompt_template,
+            get_all_prompt_templates,
+            get_prompt_template_by_id,
+            update_prompt_template,
+            delete_prompt_template,
+            increment_template_usage,
+            add_prompt_history,
+            get_prompt_history,
+            delete_prompt_history,
+            clear_prompt_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
