@@ -12,10 +12,10 @@ import type {
 const API_BASE = '';
 
 function isTauri(): boolean {
-  // For debugging - always use Tauri commands in desktop app
-  const result = typeof window !== 'undefined' && '__TAURI__' in (window as any);
-  console.log('[api.ts] isTauri check:', result, 'window.__TAURI__:', (window as any).__TAURI__);
-  return true; // Always use Tauri commands for now
+  if (typeof window === 'undefined') return false;
+  const w = window as any;
+  // Browser 中不应走 Tauri invoke 分支；仅桌面运行时返回 true
+  return Boolean(w.__TAURI__ || w.__TAURI_INTERNALS__ || w.__TAURI_IPC__);
 }
 
 async function fetchApi<T>(endpoint: string, body?: unknown): Promise<T> {

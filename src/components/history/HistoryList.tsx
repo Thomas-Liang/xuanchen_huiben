@@ -291,8 +291,7 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
       }
       const now = dayjs().format('YYYYMMDD_HHmmss');
       const fileName = `history_export_${now}.${format}`;
-      const content =
-        format === 'json' ? JSON.stringify(items, null, 2) : toMarkdown(items);
+      const content = format === 'json' ? JSON.stringify(items, null, 2) : toMarkdown(items);
       const ok = await saveExportFile(content, fileName, format);
       if (ok) {
         message.success(`历史记录已导出为 ${format.toUpperCase()}`);
@@ -465,10 +464,18 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
                 清空全部
               </Button>
             </Popconfirm>
-            <Button icon={<DownloadOutlined />} onClick={() => handleExport('json')} loading={exporting}>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => handleExport('json')}
+              loading={exporting}
+            >
               导出JSON
             </Button>
-            <Button icon={<DownloadOutlined />} onClick={() => handleExport('md')} loading={exporting}>
+            <Button
+              icon={<DownloadOutlined />}
+              onClick={() => handleExport('md')}
+              loading={exporting}
+            >
               导出MD
             </Button>
           </Space>
@@ -682,11 +689,26 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
           setEditModalVisible(false);
           setEditingHistory(null);
         }}
-        onOk={handleEditConfirm}
         okText="开始生成"
         cancelText="取消"
         width="95vw"
         style={{ maxWidth: 600 }}
+        maskClosable={false}
+        closable
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setEditModalVisible(false);
+              setEditingHistory(null);
+            }}
+          >
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={handleEditConfirm}>
+            开始生成
+          </Button>,
+        ]}
       >
         <Form form={editForm} layout="vertical">
           <Form.Item

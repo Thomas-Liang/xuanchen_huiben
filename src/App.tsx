@@ -33,6 +33,10 @@ import {
 } from 'antd';
 import {
   PlayCircleOutlined,
+  PauseCircleOutlined,
+  StopOutlined,
+  ReloadOutlined,
+  UnorderedListOutlined,
   AreaChartOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -101,6 +105,46 @@ const segmentTags: Record<string, { color: string; icon: any }> = {
   other: { color: '#64748b', icon: <RobotOutlined /> },
 };
 
+type QueueTaskStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+
+interface GenerationQueueTask {
+  id: string;
+  name: string;
+  mode: 'single' | 'batch';
+  status: QueueTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  total: number;
+  current: number;
+  elapsedMs: number;
+  runStartedAt?: string;
+  error?: string;
+  payload: {
+    segments: Array<{ index: number; content: string; characters: Array<{ name: string }> }>;
+    model: 'seedream' | 'banana_pro';
+    imageQuality: 'standard' | 'high' | 'ultra';
+    watermark: string;
+    bananaResolution: string;
+    seedreamSize: string;
+    imageSize: { width: number; height: number };
+    concurrency: number;
+    batchMode: boolean;
+    failStrategy: 'continue' | 'stop';
+    testMode: boolean;
+    mockDelayMs: number;
+    mockFailAt: number | null;
+    characterBindings: Record<string, CharacterBinding>;
+    parsedCharacters: string[];
+  };
+  progress: {
+    total: number;
+    current: number;
+    sceneResults: Array<{ index: number; status: string; result?: ImageGenerationResult }>;
+  };
+}
+
+const QUEUE_STORAGE_KEY = 'xuanchen_generation_queue_v1';
+
 function MainApp() {
   const { message } = App.useApp();
   const { resolvedTheme, setMode } = useTheme();
@@ -163,12 +207,20 @@ function MainApp() {
   const [batchSplitLoading, setBatchSplitLoading] = useState(false);
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [batchProgress, setBatchProgress] = useState<any>(null);
+  const [queueModalVisible, setQueueModalVisible] = useState(false);
+  const [generationQueue, setGenerationQueue] = useState<GenerationQueueTask[]>([]);
   const [concurrency, setConcurrency] = useState(2);
   const [batchGenModalVisible, setBatchGenModalVisible] = useState(false);
   const [batchGenerationMode, setBatchGenerationMode] = useState<'sequential' | 'parallel'>(
     'parallel'
   );
   const [failStrategy, setFailStrategy] = useState<'continue' | 'stop'>('continue');
+  const [queueTestMode, setQueueTestMode] = useState(false);
+  const [queueMockDelayMs, setQueueMockDelayMs] = useState(1200);
+  const [queueMockFailAt, setQueueMockFailAt] = useState<number | null>(null);
+  const queueCancelRef = useRef<Record<string, boolean>>({});
+  const queueRunningRef = useRef(false);
+  const queueStateRef = useRef<GenerationQueueTask[]>([]);
   const [nowTime, setNowTime] = useState(() => dayjs());
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [dashboardStats, setDashboardStats] = useState({
@@ -185,7 +237,52 @@ function MainApp() {
     loadGenerationConfig();
     loadPromptHistories();
     loadDashboardStats();
+    try {
+      const raw = localStorage.getItem(QUEUE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as GenerationQueueTask[];
+        const restored = parsed.map(task => {
+          const normalizedTask: GenerationQueueTask = {
+            ...task,
+            elapsedMs: task.elapsedMs ?? 0,
+            runStartedAt: task.runStartedAt,
+          };
+          if (task.status === 'running') {
+            return {
+              ...normalizedTask,
+              status: 'paused' as QueueTaskStatus,
+              runStartedAt: undefined,
+              error: '应用重启后任务已暂停，请手动继续',
+            };
+          }
+          return normalizedTask;
+        });
+        setGenerationQueue(restored);
+      }
+    } catch (error) {
+      console.error('恢复队列失败:', error);
+    }
   }, []);
+
+  useEffect(() => {
+    queueStateRef.current = generationQueue;
+    try {
+      const queueToSave = generationQueue.map(task => ({
+        ...task,
+        progress: {
+          ...task.progress,
+          sceneResults: task.progress.sceneResults.map(sr => ({
+            index: sr.index,
+            status: sr.status,
+          })),
+        },
+      }));
+      localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queueToSave));
+    } catch (error) {
+      console.error('保存队列失败:', error);
+      message.warning('队列数据保存失败，刷新页面后任务可能丢失');
+    }
+  }, [generationQueue]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -417,9 +514,16 @@ function MainApp() {
     }
   };
 
-  const handleBatchGenerate = async () => {
+  const updateQueueTask = (
+    taskId: string,
+    updater: (task: GenerationQueueTask) => GenerationQueueTask
+  ) => {
+    setGenerationQueue(prev => prev.map(task => (task.id === taskId ? updater(task) : task)));
+  };
+
+  const buildCurrentGenerationTask = (): GenerationQueueTask | null => {
     let segments = batchMode ? batchSplitResult?.segments : parsedResult?.segments;
-    if (!segments || segments.length === 0) return;
+    if (!segments || segments.length === 0) return null;
 
     if (!batchMode && parsedResult) {
       segments = parsedResult.segments.map((seg, idx) => ({
@@ -429,27 +533,154 @@ function MainApp() {
       }));
     }
 
-    setBatchGenerating(true);
-    const total = segments.length;
-    const initialProgress: any = {
-      total,
-      current: 0,
-      sceneResults: (segments as any).map((seg: any) => ({
-        index: seg.index,
-        status: 'pending',
-      })),
-    };
-    setBatchProgress(initialProgress);
+    const normalizedSegments = (segments as any[]).map((seg: any, idx: number) => ({
+      index: seg.index ?? idx,
+      content: seg.content,
+      characters: (seg.characters || []).map((char: any) => ({ name: char.name })),
+    }));
 
-    let width: number, height: number;
-    if (selectedModel === 'seedream') {
-      const [w, h] = seedreamSize.split('x').map(Number);
+    return {
+      id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: `${batchMode ? '批量' : '单图'}生成任务 ${dayjs().format('HH:mm:ss')}`,
+      mode: batchMode ? 'batch' : 'single',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      total: normalizedSegments.length,
+      current: 0,
+      elapsedMs: 0,
+      payload: {
+        segments: normalizedSegments,
+        model: selectedModel,
+        imageQuality,
+        watermark,
+        bananaResolution,
+        seedreamSize,
+        imageSize,
+        concurrency: batchGenerationMode === 'sequential' ? 1 : concurrency,
+        batchMode,
+        failStrategy,
+        testMode: queueTestMode,
+        mockDelayMs: queueMockDelayMs,
+        mockFailAt: queueMockFailAt,
+        characterBindings: { ...characterBindings },
+        parsedCharacters: parsedResult?.characters?.map(c => c.name) || [],
+      },
+      progress: {
+        total: normalizedSegments.length,
+        current: 0,
+        sceneResults: normalizedSegments.map(seg => ({
+          index: seg.index,
+          status: 'pending',
+        })),
+      },
+    };
+  };
+
+  const enqueueGenerationTask = () => {
+    const task = buildCurrentGenerationTask();
+    if (!task) {
+      message.warning('没有可生成的分段，请先解析或拆分');
+      return;
+    }
+    if (task.total <= 1) {
+      message.info('当前仅 1 个分段，任务会很快完成，暂停效果不明显。');
+    }
+    setGenerationQueue(prev => [...prev, task]);
+    message.success('已加入任务队列');
+  };
+
+  const handleCancelQueueTask = (taskId: string) => {
+    queueCancelRef.current[taskId] = true;
+    updateQueueTask(taskId, task => ({
+      ...task,
+      status: task.status === 'running' ? task.status : 'cancelled',
+      elapsedMs:
+        task.status === 'running' && task.runStartedAt
+          ? task.elapsedMs + Math.max(0, Date.now() - new Date(task.runStartedAt).getTime())
+          : task.elapsedMs,
+      runStartedAt: task.status === 'running' ? undefined : task.runStartedAt,
+      updatedAt: new Date().toISOString(),
+    }));
+    message.info('已取消该任务');
+  };
+
+  const handlePauseQueueTask = (taskId: string) => {
+    updateQueueTask(taskId, task => ({
+      ...task,
+      status: task.status === 'running' || task.status === 'pending' ? 'paused' : task.status,
+      elapsedMs:
+        task.status === 'running' && task.runStartedAt
+          ? task.elapsedMs + Math.max(0, Date.now() - new Date(task.runStartedAt).getTime())
+          : task.elapsedMs,
+      runStartedAt: undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+    message.info('任务已暂停');
+  };
+
+  const handleResumeQueueTask = (taskId: string) => {
+    updateQueueTask(taskId, task => ({
+      ...task,
+      status: task.status === 'paused' ? 'pending' : task.status,
+      updatedAt: new Date().toISOString(),
+    }));
+    message.success('任务已继续');
+  };
+
+  const handleRetryQueueTask = (taskId: string) => {
+    queueCancelRef.current[taskId] = false;
+    updateQueueTask(taskId, task => ({
+      ...task,
+      status: 'pending',
+      error: undefined,
+      current: 0,
+      elapsedMs: 0,
+      runStartedAt: undefined,
+      updatedAt: new Date().toISOString(),
+      progress: {
+        total: task.total,
+        current: 0,
+        sceneResults: task.payload.segments.map(seg => ({ index: seg.index, status: 'pending' })),
+      },
+    }));
+    message.success('任务已重新加入队列');
+  };
+
+  const handleClearFinishedQueue = () => {
+    setGenerationQueue(prev =>
+      prev.filter(task => !['completed', 'failed', 'cancelled'].includes(task.status))
+    );
+    message.success('已清理已结束任务');
+  };
+
+  const executeQueueTask = async (task: GenerationQueueTask) => {
+    queueRunningRef.current = true;
+    queueCancelRef.current[task.id] = false;
+    setBatchGenerating(true);
+    setBatchProgress(task.progress);
+    updateQueueTask(task.id, prev => ({
+      ...prev,
+      status: 'running',
+      runStartedAt: prev.runStartedAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      error: undefined,
+    }));
+
+    let width: number;
+    let height: number;
+    if (task.payload.model === 'seedream') {
+      const [w, h] = task.payload.seedreamSize.split('x').map(Number);
       width = w;
       height = h;
     } else {
       const baseResolution =
-        bananaResolution === '4K' ? 4096 : bananaResolution === '2K' ? 2048 : 1024;
-      const ratio = imageSize.width / imageSize.height;
+        task.payload.bananaResolution === '4K'
+          ? 4096
+          : task.payload.bananaResolution === '2K'
+            ? 2048
+            : 1024;
+      const ratio = task.payload.imageSize.width / task.payload.imageSize.height;
       if (ratio >= 1) {
         width = baseResolution;
         height = Math.round(baseResolution / ratio);
@@ -459,23 +690,33 @@ function MainApp() {
       }
     }
 
-    const concurrencyLimit = concurrency;
-    const tasks = [...segments];
+    const runTask = async (
+      seg: { index: number; content: string; characters: Array<{ name: string }> },
+      idx: number
+    ) => {
+      if (queueCancelRef.current[task.id]) return;
 
-    const runTask = async (seg: any, idx: number) => {
-      setBatchProgress((prev: any) => {
-        if (!prev) return prev;
-        const newResults = [...prev.sceneResults];
-        newResults[idx] = { ...newResults[idx], status: 'generating' };
-        return { ...prev, sceneResults: newResults };
+      const latest = queueStateRef.current.find(t => t.id === task.id);
+      if (latest?.status === 'paused') return;
+
+      updateQueueTask(task.id, prev => {
+        const sceneResults = [...prev.progress.sceneResults];
+        sceneResults[idx] = { ...sceneResults[idx], status: 'generating' };
+        const updated = {
+          ...prev,
+          progress: { ...prev.progress, sceneResults },
+          updatedAt: new Date().toISOString(),
+        };
+        setBatchProgress(updated.progress);
+        return updated;
       });
 
       try {
         const params: ImageGenerationParams = {
-          model: selectedModel,
+          model: task.payload.model,
           prompt: seg.content,
-          characterBindings: seg.characters.map((char: any) => {
-            const b = characterBindings[char.name];
+          characterBindings: seg.characters.map(char => {
+            const b = task.payload.characterBindings[char.name];
             return {
               character_name: char.name,
               reference_image_path: b?.referenceImagePath,
@@ -485,96 +726,159 @@ function MainApp() {
           width,
           height,
           count: 1,
-          quality: imageQuality,
-          watermark: selectedModel === 'seedream' ? watermark === 'true' : undefined,
+          quality: task.payload.imageQuality,
+          watermark:
+            task.payload.model === 'seedream' ? task.payload.watermark === 'true' : undefined,
         };
 
-        const result = await api.generateImage(params);
-
-        if (!batchMode) {
-          setGenerationResult(result);
-          if (result.notice) {
-            message.warning(result.notice);
+        let result: ImageGenerationResult;
+        if (task.payload.testMode) {
+          await new Promise(resolve =>
+            setTimeout(resolve, Math.max(200, task.payload.mockDelayMs))
+          );
+          if (queueCancelRef.current[task.id]) return;
+          const latest = queueStateRef.current.find(t => t.id === task.id);
+          if (latest?.status === 'paused') return;
+          if (task.payload.mockFailAt && idx + 1 === task.payload.mockFailAt) {
+            throw new Error(`测试模式：第 ${task.payload.mockFailAt} 条模拟失败`);
           }
+          result = {
+            success: true,
+            images: [],
+            notice: `测试模式：已模拟完成第 ${idx + 1} 条`,
+          };
+        } else {
+          result = await api.generateImage(params);
+        }
+
+        if (task.mode === 'single') {
+          setGenerationResult(result);
+          if (result.notice) message.warning(result.notice);
           if (!result.success && result.error) {
             message.error(`生成失败: ${toFriendlyGenerateError(result.error)}`);
           }
         }
 
-        console.log(
-          '[生成结果]',
-          result.success ? '成功' : '失败',
-          result.images?.length,
-          '张图片'
-        );
-
-        // 保存到历史记录（无论成功失败都保存）
-        try {
-          const { addHistory } = await import('./api');
-          const prompt =
-            batchMode && batchSplitResult
-              ? batchSplitResult.segments[idx]?.content || params.prompt
-              : params.prompt;
-          console.log('[保存历史记录]', {
-            prompt,
-            model: params.model,
-            imagesCount: result.images?.length,
-          });
-          await addHistory({
-            id: `gen_${Date.now()}`,
-            prompt: prompt,
-            model: params.model,
-            params: params as any,
-            images: result.images || [],
-            characters: parsedResult?.characters?.map(c => c.name) || [],
-            status: result.success ? 'completed' : 'failed',
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          });
-          console.log('[历史记录保存成功]');
-          void loadDashboardStats();
-        } catch (e) {
-          console.error('[保存历史记录失败]:', e);
+        if (!task.payload.testMode) {
+          try {
+            const { addHistory } = await import('./api');
+            await addHistory({
+              id: `gen_${Date.now()}`,
+              prompt: params.prompt,
+              model: params.model,
+              params: params as any,
+              images: result.images || [],
+              characters: task.payload.parsedCharacters,
+              status: result.success ? 'completed' : 'failed',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+            void loadDashboardStats();
+          } catch (e) {
+            console.error('[保存历史记录失败]:', e);
+          }
         }
 
-        setBatchProgress((prev: any) => {
-          if (!prev) return prev;
-          const newResults = [...prev.sceneResults];
-          newResults[idx] = {
-            ...newResults[idx],
+        updateQueueTask(task.id, prev => {
+          const sceneResults = [...prev.progress.sceneResults];
+          sceneResults[idx] = {
+            ...sceneResults[idx],
             status: result.success ? 'completed' : 'failed',
-            result: result,
+            result,
           };
-          return { ...prev, current: prev.current + 1, sceneResults: newResults };
+          const nextProgress = {
+            ...prev.progress,
+            current: prev.progress.current + 1,
+            sceneResults,
+          };
+          const updated = {
+            ...prev,
+            current: nextProgress.current,
+            progress: nextProgress,
+            updatedAt: new Date().toISOString(),
+          };
+          setBatchProgress(nextProgress);
+          return updated;
         });
       } catch (err) {
-        if (!batchMode) {
-          const friendlyError = toFriendlyGenerateError(err);
+        const friendlyError = toFriendlyGenerateError(err);
+        if (task.mode === 'single') {
           setGenerationResult({
             success: false,
             images: [],
             error: friendlyError,
           });
           message.error(`生成失败: ${friendlyError}`);
-          void loadDashboardStats();
         }
-        setBatchProgress((prev: any) => {
-          if (!prev) return prev;
-          const newResults = [...prev.sceneResults];
-          newResults[idx] = { ...newResults[idx], status: 'failed' };
-          return { ...prev, current: prev.current + 1, sceneResults: newResults };
+        updateQueueTask(task.id, prev => {
+          const sceneResults = [...prev.progress.sceneResults];
+          sceneResults[idx] = {
+            ...sceneResults[idx],
+            status: 'failed',
+            result: { success: false, images: [], error: friendlyError },
+          };
+          const nextProgress = {
+            ...prev.progress,
+            current: prev.progress.current + 1,
+            sceneResults,
+          };
+          const updated = {
+            ...prev,
+            current: nextProgress.current,
+            progress: nextProgress,
+            error: friendlyError,
+            updatedAt: new Date().toISOString(),
+          };
+          setBatchProgress(nextProgress);
+          return updated;
         });
+        if (task.payload.failStrategy === 'stop') {
+          queueCancelRef.current[task.id] = true;
+        }
       }
     };
 
-    for (let i = 0; i < tasks.length; i += concurrencyLimit) {
-      const chunk = tasks.slice(i, i + concurrencyLimit);
-      await Promise.all(chunk.map((task, chunkIdx) => runTask(task, i + chunkIdx)));
+    const segments = task.payload.segments;
+    let completedCount = task.progress.current;
+
+    for (let i = task.progress.current; i < segments.length; i += 1) {
+      if (queueCancelRef.current[task.id]) break;
+      const latest = queueStateRef.current.find(t => t.id === task.id);
+      if (latest?.status === 'paused') break;
+      await runTask(segments[i], i);
+      completedCount += 1;
+    }
+
+    const latestAfter = queueStateRef.current.find(t => t.id === task.id);
+    const cancelled = queueCancelRef.current[task.id];
+    const paused = latestAfter?.status === 'paused';
+    const total = task.total;
+    const allDone = completedCount >= total;
+
+    updateQueueTask(task.id, prev => ({
+      ...prev,
+      status: cancelled ? 'cancelled' : paused ? 'paused' : allDone ? 'completed' : 'failed',
+      elapsedMs: prev.runStartedAt
+        ? prev.elapsedMs + Math.max(0, Date.now() - new Date(prev.runStartedAt).getTime())
+        : prev.elapsedMs,
+      runStartedAt: undefined,
+      updatedAt: new Date().toISOString(),
+    }));
+
+    if (!cancelled && !paused && allDone) {
+      message.success(`任务完成：${task.name}`);
     }
 
     setBatchGenerating(false);
-    message.success('批量生成任务已完成');
+    queueRunningRef.current = false;
   };
+
+  useEffect(() => {
+    if (queueRunningRef.current) return;
+    const next = generationQueue.find(task => task.status === 'pending');
+    if (!next) return;
+    void executeQueueTask(next);
+  }, [generationQueue]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -937,6 +1241,15 @@ function MainApp() {
     if (Number.isNaN(d.getTime())) return '--';
     return d.toLocaleTimeString('zh-CN');
   };
+  const formatDuration = (ms: number) => {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  };
 
   return (
     <ConfigProvider theme={themeConfig}>
@@ -1051,17 +1364,16 @@ function MainApp() {
                         marginTop: 2,
                         paddingBottom: 2,
                         display: 'grid',
-                        gridTemplateColumns:
-                          'minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.6fr)',
-                        gap: 16,
+                        gridTemplateColumns: 'repeat(5, 1fr)',
+                        gap: 10,
                         width: '100%',
                       }}
                     >
                       <div
                         style={{
-                          borderRadius: 12,
-                          padding: '14px 16px',
-                          minHeight: 92,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          minHeight: 72,
                           minWidth: 0,
                           background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
                           border:
@@ -1069,41 +1381,45 @@ function MainApp() {
                               ? '1px solid rgba(148,163,184,0.25)'
                               : '1px solid #e5e7eb',
                           boxShadow:
-                            resolvedTheme === 'dark'
-                              ? 'none'
-                              : '0 1px 3px rgba(15,23,42,0.06)',
+                            resolvedTheme === 'dark' ? 'none' : '0 1px 3px rgba(15,23,42,0.06)',
                         }}
                       >
-                        <Space direction="vertical" size={6} style={{ width: '100%' }}>
-                          <Space size={8} align="center">
-                            <AreaChartOutlined style={{ color: '#6366f1', fontSize: 14 }} />
-                            <Text type="secondary" style={{ fontSize: 12 }}>
+                        <Space size={6} align="start">
+                          <AreaChartOutlined style={{ color: '#6366f1', fontSize: 13 }} />
+                          <div>
+                            <Text type="secondary" style={{ fontSize: 10 }}>
                               今日概览
                             </Text>
-                          </Space>
-                          <Text style={{ fontSize: 13, color: resolvedTheme === 'dark' ? '#cbd5e1' : '#475569' }}>
-                            {calendarLabel}
-                          </Text>
-                          <Text
-                            style={{
-                              marginTop: -2,
-                              fontSize: 24,
-                              lineHeight: 1,
-                              fontWeight: 700,
-                              color: '#6366f1',
-                              fontVariantNumeric: 'tabular-nums',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {calendarClock}
-                          </Text>
+                            <div
+                              style={{
+                                fontSize: 20,
+                                lineHeight: 1.2,
+                                fontWeight: 700,
+                                color: '#6366f1',
+                                fontVariantNumeric: 'tabular-nums',
+                                whiteSpace: 'nowrap',
+                                marginTop: 2,
+                              }}
+                            >
+                              {calendarClock}
+                            </div>
+                            <Text
+                              style={{
+                                fontSize: 10,
+                                color: resolvedTheme === 'dark' ? '#cbd5e1' : '#64748b',
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              {calendarLabel}
+                            </Text>
+                          </div>
                         </Space>
                       </div>
                       <div
                         style={{
-                          borderRadius: 12,
-                          padding: '14px 16px',
-                          minHeight: 92,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          minHeight: 72,
                           minWidth: 0,
                           background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
                           border:
@@ -1111,18 +1427,16 @@ function MainApp() {
                               ? '1px solid rgba(148,163,184,0.25)'
                               : '1px solid #e5e7eb',
                           boxShadow:
-                            resolvedTheme === 'dark'
-                              ? 'none'
-                              : '0 1px 3px rgba(15,23,42,0.06)',
+                            resolvedTheme === 'dark' ? 'none' : '0 1px 3px rgba(15,23,42,0.06)',
                         }}
                       >
-                        <Space size={8} align="start">
-                          <AreaChartOutlined style={{ color: '#6366f1', fontSize: 16 }} />
+                        <Space size={6} align="start">
+                          <AreaChartOutlined style={{ color: '#6366f1', fontSize: 13 }} />
                           <div>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
+                            <Text type="secondary" style={{ fontSize: 10 }}>
                               生成总数
                             </Text>
-                            <div style={{ fontSize: 32, lineHeight: 1, fontWeight: 700 }}>
+                            <div style={{ fontSize: 20, lineHeight: 1.2, fontWeight: 700 }}>
                               {dashboardStats.todayTotal}
                             </div>
                           </div>
@@ -1130,9 +1444,9 @@ function MainApp() {
                       </div>
                       <div
                         style={{
-                          borderRadius: 12,
-                          padding: '14px 16px',
-                          minHeight: 92,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          minHeight: 72,
                           minWidth: 0,
                           background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
                           border:
@@ -1140,18 +1454,23 @@ function MainApp() {
                               ? '1px solid rgba(148,163,184,0.25)'
                               : '1px solid #e5e7eb',
                           boxShadow:
-                            resolvedTheme === 'dark'
-                              ? 'none'
-                              : '0 1px 3px rgba(15,23,42,0.06)',
+                            resolvedTheme === 'dark' ? 'none' : '0 1px 3px rgba(15,23,42,0.06)',
                         }}
                       >
-                        <Space size={8} align="start">
-                          <CheckCircleOutlined style={{ color: '#10b981', fontSize: 16 }} />
+                        <Space size={6} align="start">
+                          <CheckCircleOutlined style={{ color: '#10b981', fontSize: 13 }} />
                           <div>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
+                            <Text type="secondary" style={{ fontSize: 10 }}>
                               成功率
                             </Text>
-                            <div style={{ fontSize: 32, lineHeight: 1, fontWeight: 700, color: '#10b981' }}>
+                            <div
+                              style={{
+                                fontSize: 20,
+                                lineHeight: 1.2,
+                                fontWeight: 700,
+                                color: '#10b981',
+                              }}
+                            >
                               {successRate}%
                             </div>
                           </div>
@@ -1159,9 +1478,9 @@ function MainApp() {
                       </div>
                       <div
                         style={{
-                          borderRadius: 12,
-                          padding: '14px 16px',
-                          minHeight: 92,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          minHeight: 72,
                           minWidth: 0,
                           background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
                           border:
@@ -1169,18 +1488,23 @@ function MainApp() {
                               ? '1px solid rgba(148,163,184,0.25)'
                               : '1px solid #e5e7eb',
                           boxShadow:
-                            resolvedTheme === 'dark'
-                              ? 'none'
-                              : '0 1px 3px rgba(15,23,42,0.06)',
+                            resolvedTheme === 'dark' ? 'none' : '0 1px 3px rgba(15,23,42,0.06)',
                         }}
                       >
-                        <Space size={8} align="start">
-                          <CloseCircleOutlined style={{ color: '#ef4444', fontSize: 16 }} />
+                        <Space size={6} align="start">
+                          <CloseCircleOutlined style={{ color: '#ef4444', fontSize: 13 }} />
                           <div>
-                            <Text type="secondary" style={{ fontSize: 12 }}>
+                            <Text type="secondary" style={{ fontSize: 10 }}>
                               失败数
                             </Text>
-                            <div style={{ fontSize: 32, lineHeight: 1, fontWeight: 700, color: '#ef4444' }}>
+                            <div
+                              style={{
+                                fontSize: 20,
+                                lineHeight: 1.2,
+                                fontWeight: 700,
+                                color: '#ef4444',
+                              }}
+                            >
                               {dashboardStats.todayFailed}
                             </div>
                           </div>
@@ -1188,9 +1512,9 @@ function MainApp() {
                       </div>
                       <div
                         style={{
-                          borderRadius: 12,
-                          padding: '14px 16px',
-                          minHeight: 92,
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                          minHeight: 72,
                           minWidth: 0,
                           background: resolvedTheme === 'dark' ? 'rgba(15,23,42,0.78)' : '#ffffff',
                           border:
@@ -1198,19 +1522,17 @@ function MainApp() {
                               ? '1px solid rgba(148,163,184,0.25)'
                               : '1px solid #e5e7eb',
                           boxShadow:
-                            resolvedTheme === 'dark'
-                              ? 'none'
-                              : '0 1px 3px rgba(15,23,42,0.06)',
+                            resolvedTheme === 'dark' ? 'none' : '0 1px 3px rgba(15,23,42,0.06)',
                         }}
                       >
-                        <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                          <Text type="secondary" style={{ fontSize: 12 }}>
+                        <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                          <Text type="secondary" style={{ fontSize: 10 }}>
                             最近失败
                           </Text>
                           <Text
                             ellipsis={{ tooltip: true }}
                             style={{
-                              fontSize: 14,
+                              fontSize: 12,
                               fontWeight: 600,
                               color: resolvedTheme === 'dark' ? '#e2e8f0' : '#1f2937',
                             }}
@@ -1224,8 +1546,6 @@ function MainApp() {
                         </Space>
                       </div>
                     </div>
-
-                    
                   </Spin>
                 </Card>
               </SlideUp>
@@ -1508,6 +1828,14 @@ function MainApp() {
                           <Space>
                             <Button
                               size="small"
+                              icon={<UnorderedListOutlined />}
+                              onClick={() => setQueueModalVisible(true)}
+                            >
+                              任务队列（{generationQueue.filter(t => t.status === 'pending').length}
+                              ）
+                            </Button>
+                            <Button
+                              size="small"
                               icon={<SettingOutlined />}
                               onClick={() => setBatchGenModalVisible(true)}
                             >
@@ -1518,15 +1846,13 @@ function MainApp() {
                               size="small"
                               icon={<PlayCircleOutlined />}
                               loading={batchGenerating}
-                              onClick={handleBatchGenerate}
+                              onClick={enqueueGenerationTask}
                               style={{
                                 background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
                                 border: 'none',
                               }}
                             >
-                              {batchGenerating
-                                ? `生成中 (${batchProgress?.current}/${batchProgress?.total})`
-                                : '全部生图'}
+                              加入队列
                             </Button>
                           </Space>
                         </div>
@@ -1764,6 +2090,47 @@ function MainApp() {
                       />
                     </Col>
                   </Row>
+                  <Divider style={{ margin: '16px 0' }} />
+                  <Row gutter={[16, 16]}>
+                    <Col span={8}>
+                      <Text strong>队列测试模式：</Text>
+                      <div style={{ marginTop: 4 }}>
+                        <Switch checked={queueTestMode} onChange={setQueueTestMode} />
+                      </div>
+                    </Col>
+                    <Col span={8}>
+                      <Text strong>模拟延迟(ms)：</Text>
+                      <InputNumber
+                        min={200}
+                        max={8000}
+                        step={100}
+                        value={queueMockDelayMs}
+                        onChange={value => setQueueMockDelayMs(value || 1200)}
+                        style={{ width: '100%', marginTop: 4 }}
+                        disabled={!queueTestMode}
+                      />
+                    </Col>
+                    <Col span={8}>
+                      <Text strong>失败场景序号：</Text>
+                      <InputNumber
+                        min={1}
+                        max={100}
+                        value={queueMockFailAt ?? undefined}
+                        onChange={value => setQueueMockFailAt(value ? Number(value) : null)}
+                        style={{ width: '100%', marginTop: 4 }}
+                        disabled={!queueTestMode}
+                        placeholder="留空表示不失败"
+                      />
+                    </Col>
+                  </Row>
+                  {queueTestMode ? (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ marginTop: 12 }}
+                      message="测试模式已开启：不调用真实生图 API，不写入历史，仅用于验证队列流程。"
+                    />
+                  ) : null}
 
                   {selectedModel === 'seedream' ? (
                     <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
@@ -1868,6 +2235,144 @@ function MainApp() {
                 </div>
               </Modal>
 
+              <Modal
+                title="任务队列中心"
+                open={queueModalVisible}
+                onCancel={() => setQueueModalVisible(false)}
+                width={820}
+                footer={[
+                  <Button key="clear" onClick={handleClearFinishedQueue}>
+                    清理已结束
+                  </Button>,
+                  <Button key="close" type="primary" onClick={() => setQueueModalVisible(false)}>
+                    关闭
+                  </Button>,
+                ]}
+              >
+                <Space style={{ marginBottom: 12, width: '100%', justifyContent: 'space-between' }}>
+                  <Text type="secondary">
+                    待执行 {generationQueue.filter(t => t.status === 'pending').length} / 运行中{' '}
+                    {generationQueue.filter(t => t.status === 'running').length}
+                  </Text>
+                  <Text type="secondary">
+                    当前进度：{batchProgress?.current || 0}/{batchProgress?.total || 0}
+                  </Text>
+                </Space>
+                <List
+                  dataSource={generationQueue}
+                  locale={{ emptyText: '暂无任务' }}
+                  renderItem={task => (
+                    <List.Item
+                      actions={[
+                        task.status === 'pending' || task.status === 'running' ? (
+                          <Button
+                            key="pause"
+                            size="small"
+                            icon={<PauseCircleOutlined />}
+                            onClick={() => handlePauseQueueTask(task.id)}
+                          >
+                            暂停
+                          </Button>
+                        ) : null,
+                        task.status === 'paused' ? (
+                          <Button
+                            key="resume"
+                            size="small"
+                            type="primary"
+                            icon={<PlayCircleOutlined />}
+                            onClick={() => handleResumeQueueTask(task.id)}
+                          >
+                            继续
+                          </Button>
+                        ) : null,
+                        task.status === 'running' || task.status === 'pending' ? (
+                          <Button
+                            key="cancel"
+                            size="small"
+                            danger
+                            icon={<StopOutlined />}
+                            onClick={() => handleCancelQueueTask(task.id)}
+                          >
+                            取消
+                          </Button>
+                        ) : null,
+                        task.status === 'failed' || task.status === 'cancelled' ? (
+                          <Button
+                            key="retry"
+                            size="small"
+                            icon={<ReloadOutlined />}
+                            onClick={() => handleRetryQueueTask(task.id)}
+                          >
+                            重试
+                          </Button>
+                        ) : null,
+                      ].filter(Boolean)}
+                    >
+                      <List.Item.Meta
+                        title={
+                          <Space>
+                            <Text strong>{task.name}</Text>
+                            <Tag
+                              color={
+                                task.status === 'running'
+                                  ? 'processing'
+                                  : task.status === 'completed'
+                                    ? 'success'
+                                    : task.status === 'failed'
+                                      ? 'error'
+                                      : task.status === 'cancelled'
+                                        ? 'default'
+                                        : task.status === 'paused'
+                                          ? 'warning'
+                                          : 'blue'
+                              }
+                            >
+                              {task.status}
+                            </Tag>
+                            <Tag>{task.mode === 'batch' ? '批量' : '单图'}</Tag>
+                            {task.payload.testMode ? <Tag color="gold">测试模式</Tag> : null}
+                          </Space>
+                        }
+                        description={
+                          <Space direction="vertical" size={2}>
+                            <Text type="secondary">
+                              进度 {task.progress.current}/{task.progress.total} · 创建于{' '}
+                              {dayjs(task.createdAt).format('HH:mm:ss')}
+                            </Text>
+                            <Text type="secondary">
+                              生成耗时{' '}
+                              {formatDuration(
+                                task.elapsedMs +
+                                  (task.status === 'running' && task.runStartedAt
+                                    ? Math.max(
+                                        0,
+                                        nowTime.valueOf() - new Date(task.runStartedAt).getTime()
+                                      )
+                                    : 0)
+                              )}
+                            </Text>
+                            {task.error ? <Text type="danger">错误：{task.error}</Text> : null}
+                            {task.progress.sceneResults.filter(s => s.status === 'failed').length >
+                              0 && (
+                              <Text type="danger">
+                                失败分段：
+                                {task.progress.sceneResults
+                                  .filter(s => s.status === 'failed')
+                                  .map(s => {
+                                    const err = s.result?.error || '未知错误';
+                                    return `场景${s.index + 1}: ${err.slice(0, 30)}${err.length > 30 ? '...' : ''}`;
+                                  })
+                                  .join(' | ')}
+                              </Text>
+                            )}
+                          </Space>
+                        }
+                      />
+                    </List.Item>
+                  )}
+                />
+              </Modal>
+
               {!batchMode && (
                 <Spin spinning={loading}>
                   {parsedResult ? (
@@ -1880,6 +2385,14 @@ function MainApp() {
                           <Space style={{ marginLeft: 'auto' }}>
                             <Button
                               size="small"
+                              icon={<UnorderedListOutlined />}
+                              onClick={() => setQueueModalVisible(true)}
+                            >
+                              任务队列（{generationQueue.filter(t => t.status === 'pending').length}
+                              ）
+                            </Button>
+                            <Button
+                              size="small"
                               icon={<SettingOutlined />}
                               onClick={() => setBatchGenModalVisible(true)}
                             >
@@ -1890,16 +2403,14 @@ function MainApp() {
                               size="small"
                               icon={<PlayCircleOutlined />}
                               loading={batchGenerating}
-                              onClick={handleBatchGenerate}
+                              onClick={enqueueGenerationTask}
                               disabled={!parsedResult}
                               style={{
                                 background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
                                 border: 'none',
                               }}
                             >
-                              {batchGenerating
-                                ? `生成中 (${batchProgress?.current}/${batchProgress?.total})`
-                                : '全部生图'}
+                              加入队列
                             </Button>
                           </Space>
                         </div>
@@ -2655,7 +3166,9 @@ function MainApp() {
             description={
               <div style={{ color: '#666' }}>
                 <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                  <li>首页顶部“今日概览”会实时显示日期时间、生成总数、成功率、失败数、最近失败。</li>
+                  <li>
+                    首页顶部“今日概览”会实时显示日期时间、生成总数、成功率、失败数、最近失败。
+                  </li>
                   <li>打开“生成历史记录”弹窗后，可在底部左侧使用“导出JSON / 导出MD”。</li>
                   <li>导出范围为当前筛选条件下的全部匹配记录（不只是当前页）。</li>
                 </ul>
