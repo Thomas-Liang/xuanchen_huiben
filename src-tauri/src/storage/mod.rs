@@ -225,6 +225,7 @@ pub struct Database {
     pub templates: Vec<CharacterTemplate>,
     pub prompt_templates: Vec<PromptTemplate>,
     pub prompt_histories: Vec<PromptHistoryItem>,
+    pub saved_filters: Vec<SavedFilter>,
     pub settings: AppSettings,
 }
 
@@ -243,6 +244,7 @@ impl Default for Database {
             templates: vec![],
             prompt_templates: get_builtin_prompt_templates(),
             prompt_histories: vec![],
+            saved_filters: vec![],
             settings: AppSettings::default(),
         }
     }
@@ -417,6 +419,19 @@ pub struct HistoryFilter {
     pub prompt_keyword: Option<String>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    pub character: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedFilter {
+    pub id: String,
+    pub name: String,
+    pub model: Option<String>,
+    pub prompt_keyword: Option<String>,
+    pub start_date: Option<String>,
+    pub end_date: Option<String>,
+    pub character: Option<String>,
+    pub created_at: String,
 }
 
 pub fn get_history(
@@ -449,7 +464,10 @@ pub fn get_history(
                             dt >= start_dt
                         } else {
                             // Fallback for old format
-                            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&h.created_at, "%Y-%m-%d %H:%M:%S") {
+                            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(
+                                &h.created_at,
+                                "%Y-%m-%d %H:%M:%S",
+                            ) {
                                 dt.and_utc() >= start_dt.with_timezone(&chrono::Utc)
                             } else {
                                 false
@@ -468,7 +486,10 @@ pub fn get_history(
                             dt <= end_dt
                         } else {
                             // Fallback for old format
-                            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&h.created_at, "%Y-%m-%d %H:%M:%S") {
+                            if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(
+                                &h.created_at,
+                                "%Y-%m-%d %H:%M:%S",
+                            ) {
                                 dt.and_utc() <= end_dt.with_timezone(&chrono::Utc)
                             } else {
                                 false
@@ -476,6 +497,16 @@ pub fn get_history(
                         }
                     });
                 }
+            }
+        }
+
+        if let Some(character) = f.character {
+            if !character.is_empty() {
+                items.retain(|h| {
+                    h.characters
+                        .iter()
+                        .any(|c| c.to_lowercase().contains(&character.to_lowercase()))
+                });
             }
         }
     }
@@ -650,7 +681,8 @@ fn get_builtin_prompt_templates() -> Vec<PromptTemplate> {
 
     let mut t3 = PromptTemplate::new(
         "电影感写实模板".to_string(),
-        "电影感写实风格，镜头语言明确，{人物}在{地点}执行{动作}，景深自然，光影对比清楚，细节真实".to_string(),
+        "电影感写实风格，镜头语言明确，{人物}在{地点}执行{动作}，景深自然，光影对比清楚，细节真实"
+            .to_string(),
         "场景".to_string(),
     );
     t3.id = "ptpl_builtin_cinematic".to_string();
@@ -662,7 +694,7 @@ fn extract_variables(content: &str) -> Vec<String> {
     let mut vars = Vec::new();
     let mut in_var = false;
     let mut current_var = String::new();
-    
+
     for ch in content.chars() {
         if ch == '{' {
             in_var = true;
@@ -890,5 +922,39 @@ pub fn format_size(bytes: u64) -> String {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+pub fn add_saved_filter(filter: SavedFilter) -> Result<SavedFilter, String> {
+    let mut db = Storage::load_database()?;
+    let new_filter = SavedFilter {
+        id: filter.id,
+        name: filter.name,
+        model: filter.model,
+        prompt_keyword: filter.prompt_keyword,
+        start_date: filter.start_date,
+        end_date: filter.end_date,
+        character: filter.character,
+        created_at: get_current_datetime(),
+    };
+    db.saved_filters.push(new_filter.clone());
+    Storage::save_database(&db)?;
+    Ok(new_filter)
+}
+
+pub fn get_saved_filters() -> Result<Vec<SavedFilter>, String> {
+    let db = Storage::load_database()?;
+    Ok(db.saved_filters)
+}
+
+pub fn delete_saved_filter(id: &str) -> Result<bool, String> {
+    let mut db = Storage::load_database()?;
+    let len_before = db.saved_filters.len();
+    db.saved_filters.retain(|f| f.id != id);
+    if db.saved_filters.len() < len_before {
+        Storage::save_database(&db)?;
+        Ok(true)
+    } else {
+        Ok(false)
     }
 }

@@ -495,6 +495,7 @@ export async function getHistory(
     promptKeyword?: string;
     startDate?: string;
     endDate?: string;
+    character?: string;
   }
 ): Promise<{
   total: number;
@@ -523,6 +524,7 @@ export async function getHistory(
       start_date: filter?.startDate || null,
       endDate: filter?.endDate || null,
       end_date: filter?.endDate || null,
+      character: filter?.character || null,
     });
   }
   const params = new URLSearchParams();
@@ -532,6 +534,7 @@ export async function getHistory(
   if (filter?.promptKeyword) params.set('prompt_keyword', filter.promptKeyword);
   if (filter?.startDate) params.set('start_date', filter.startDate);
   if (filter?.endDate) params.set('end_date', filter.endDate);
+  if (filter?.character) params.set('character', filter.character);
   return fetchApi(`/api/history/list?${params.toString()}`);
 }
 
@@ -791,4 +794,43 @@ export async function clearPromptHistory(): Promise<boolean> {
     return invoke('clear_prompt_history');
   }
   return fetchApi('/api/prompt-history/clear');
+}
+
+export interface SavedFilter {
+  id: string;
+  name: string;
+  model?: string;
+  prompt_keyword?: string;
+  start_date?: string;
+  end_date?: string;
+  character?: string;
+  created_at: string;
+}
+
+export async function addSavedFilter(
+  filter: Omit<SavedFilter, 'id' | 'created_at'>
+): Promise<SavedFilter> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('add_saved_filter', {
+      filter: { ...filter, id: `filter_${Date.now()}`, created_at: '' },
+    });
+  }
+  return fetchApi('/api/saved-filters/add', filter);
+}
+
+export async function getSavedFilters(): Promise<SavedFilter[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_saved_filters');
+  }
+  return fetchApi('/api/saved-filters/list');
+}
+
+export async function deleteSavedFilter(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_saved_filter', { id });
+  }
+  return fetchApi('/api/saved-filters/delete', { id });
 }

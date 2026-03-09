@@ -80,12 +80,14 @@ fn get_history(
     prompt_keyword: Option<String>,
     start_date: Option<String>,
     end_date: Option<String>,
+    character: Option<String>,
 ) -> Result<storage::GenerationHistoryList, String> {
     let filter = storage::HistoryFilter {
         model,
         prompt_keyword,
         start_date,
         end_date,
+        character,
     };
     storage::get_history(page, page_size, Some(filter))
 }
@@ -219,6 +221,23 @@ fn delete_prompt_history(id: String) -> Result<(), String> {
 #[tauri::command]
 fn clear_prompt_history() -> Result<(), String> {
     storage::clear_prompt_history()
+}
+
+// ==================== Saved Filter Commands ====================
+
+#[tauri::command]
+fn add_saved_filter(filter: storage::SavedFilter) -> Result<storage::SavedFilter, String> {
+    storage::add_saved_filter(filter)
+}
+
+#[tauri::command]
+fn get_saved_filters() -> Result<Vec<storage::SavedFilter>, String> {
+    storage::get_saved_filters()
+}
+
+#[tauri::command]
+fn delete_saved_filter(id: String) -> Result<bool, String> {
+    storage::delete_saved_filter(&id)
 }
 
 // ==================== Settings Commands ====================
@@ -408,6 +427,9 @@ pub async fn main() {
             get_prompt_history,
             delete_prompt_history,
             clear_prompt_history,
+            add_saved_filter,
+            get_saved_filters,
+            delete_saved_filter,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

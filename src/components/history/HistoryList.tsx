@@ -32,6 +32,7 @@ import {
   RedoOutlined,
   EditOutlined,
   DownloadOutlined,
+  SaveOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { getHistory, deleteHistory, clearHistory } from '../../api';
@@ -82,6 +83,12 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
   ]);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [exporting, setExporting] = useState(false);
+  const [filterCharacter, setFilterCharacter] = useState<string | undefined>();
+  const [savedFilters, setSavedFilters] = useState<
+    Array<{ id: string; name: string; model?: string; prompt_keyword?: string; character?: string }>
+  >([]);
+  const [saveFilterModalVisible, setSaveFilterModalVisible] = useState(false);
+  const [saveFilterName, setSaveFilterName] = useState('');
 
   const getDateRange = (filter: QuickFilter): [string, string] | null => {
     const now = dayjs();
@@ -118,6 +125,7 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
         promptKeyword: debouncedSearchKeyword || undefined,
         startDate,
         endDate,
+        character: filterCharacter,
       });
       setHistory(result.items);
       setTotal(result.total);
@@ -141,7 +149,46 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
       setCurrentPage(1);
       loadHistory(1);
     }
-  }, [debouncedSearchKeyword, filterModel, dateRange, quickFilter]);
+  }, [debouncedSearchKeyword, filterModel, dateRange, quickFilter, filterCharacter]);
+
+  useEffect(() => {
+    if (visible) {
+      loadSavedFilters();
+    }
+  }, [visible]);
+
+  const loadSavedFilters = async () => {
+    try {
+      const { getSavedFilters } = await import('../../api');
+      const filters = await getSavedFilters();
+      setSavedFilters(filters);
+    } catch (error) {
+      console.error('加载筛选方案失败:', error);
+    }
+  };
+
+  const handleSaveFilter = async () => {
+    if (!saveFilterName.trim()) {
+      message.warning('请输入筛选方案名称');
+      return;
+    }
+    try {
+      const { addSavedFilter } = await import('../../api');
+      await addSavedFilter({
+        name: saveFilterName,
+        model: filterModel,
+        prompt_keyword: searchKeyword,
+        character: filterCharacter,
+      });
+      message.success('筛选方案已保存');
+      setSaveFilterModalVisible(false);
+      setSaveFilterName('');
+      loadSavedFilters();
+    } catch (error) {
+      console.error('保存筛选方案失败:', error);
+      message.error('保存筛选方案失败');
+    }
+  };
 
   const groupedHistory = useMemo(() => {
     const groups: Record<string, GenerationHistory[]> = {};
@@ -517,6 +564,30 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
             onChange={handleDateRangeChange}
             style={{ minWidth: 240, flex: 1 }}
           />
+          <Input
+            placeholder="角色筛选"
+            value={filterCharacter}
+            onChange={e => setFilterCharacter(e.target.value || undefined)}
+            allowClear
+            style={{ minWidth: 100, flex: 1 }}
+          />
+          <Select
+            placeholder="筛选方案"
+            allowClear
+            style={{ minWidth: 120 }}
+            onChange={value => {
+              const filter = savedFilters.find(f => f.id === value);
+              if (filter) {
+                setFilterModel(filter.model);
+                setSearchKeyword(filter.prompt_keyword || '');
+                setFilterCharacter(filter.character);
+              }
+            }}
+            options={savedFilters.map(f => ({ value: f.id, label: f.name }))}
+          />
+          <Button onClick={() => setSaveFilterModalVisible(true)} icon={<SaveOutlined />}>
+            保存
+          </Button>
           <Radio.Group
             value={quickFilter}
             onChange={e => handleQuickFilterChange(e.target.value)}
@@ -762,6 +833,21 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
             <Switch checkedChildren="开启" unCheckedChildren="关闭" />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title="保存筛选方案"
+        open={saveFilterModalVisible}
+        onCancel={() => setSaveFilterModalVisible(false)}
+        onOk={handleSaveFilter}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Input
+          placeholder="请输入筛选方案名称"
+          value={saveFilterName}
+          onChange={e => setSaveFilterName(e.target.value)}
+        />
       </Modal>
     </Modal>
   );

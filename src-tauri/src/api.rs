@@ -547,6 +547,7 @@ pub struct HistoryListQuery {
     start_date: Option<String>,
     #[serde(alias = "endDate")]
     end_date: Option<String>,
+    character: Option<String>,
 }
 
 pub async fn api_get_history_handler(
@@ -557,6 +558,7 @@ pub async fn api_get_history_handler(
         prompt_keyword: query.prompt_keyword,
         start_date: query.start_date,
         end_date: query.end_date,
+        character: query.character,
     };
     
     match storage::get_history(query.page.unwrap_or(0), query.page_size.unwrap_or(20), Some(filter)) {
