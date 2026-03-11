@@ -33,13 +33,22 @@ import {
   EditOutlined,
   DownloadOutlined,
   SaveOutlined,
+  SwapOutlined,
+  CheckOutlined,
+  CloseOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import { getHistory, deleteHistory, clearHistory } from '../../api';
-import dayjs from 'dayjs';
 import { motion, AnimatePresence } from 'framer-motion';
+import dayjs from 'dayjs';
+import {
+  getHistory,
+  deleteHistory,
+  clearHistory,
+  previewExportData,
+  createExportPackage,
+} from '../../api';
 
-const { Text } = Typography;
+const { Text, Paragraph } = Typography;
 const { RangePicker } = DatePicker;
 
 interface GenerationHistory {
@@ -50,6 +59,7 @@ interface GenerationHistory {
   images: string[];
   characters: string[];
   status: string;
+  source_history_id?: string;
   created_at: string;
   updated_at: string;
 }
@@ -83,12 +93,36 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
   ]);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
   const [exporting, setExporting] = useState(false);
+  const [exportPackageModalVisible, setExportPackageModalVisible] = useState(false);
+  const [exportPreviewData, setExportPreviewData] = useState<any[]>([]);
+  const [exportLoading, setExportLoading] = useState(false);
   const [filterCharacter, setFilterCharacter] = useState<string | undefined>();
+  const [filterWidthMin, setFilterWidthMin] = useState<number | undefined>();
+  const [filterWidthMax, setFilterWidthMax] = useState<number | undefined>();
+  const [filterHeightMin, setFilterHeightMin] = useState<number | undefined>();
+  const [filterHeightMax, setFilterHeightMax] = useState<number | undefined>();
+  const [filterQuality, setFilterQuality] = useState<string | undefined>();
   const [savedFilters, setSavedFilters] = useState<
-    Array<{ id: string; name: string; model?: string; prompt_keyword?: string; character?: string }>
+    Array<{
+      id: string;
+      name: string;
+      model?: string;
+      prompt_keyword?: string;
+      character?: string;
+      width_min?: number;
+      width_max?: number;
+      height_min?: number;
+      height_max?: number;
+      quality?: string;
+    }>
   >([]);
   const [saveFilterModalVisible, setSaveFilterModalVisible] = useState(false);
   const [saveFilterName, setSaveFilterName] = useState('');
+  const [compareItems, setCompareItems] = useState<GenerationHistory[]>([]);
+  const [compareModalVisible, setCompareModalVisible] = useState(false);
+  const [compareEditModalVisible, setCompareEditModalVisible] = useState(false);
+  const [compareEditingItem, setCompareEditingItem] = useState<GenerationHistory | null>(null);
+  const [compareEditForm] = Form.useForm();
 
   const getDateRange = (filter: QuickFilter): [string, string] | null => {
     const now = dayjs();
@@ -126,6 +160,11 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
         startDate,
         endDate,
         character: filterCharacter,
+        widthMin: filterWidthMin,
+        widthMax: filterWidthMax,
+        heightMin: filterHeightMin,
+        heightMax: filterHeightMax,
+        quality: filterQuality,
       });
       setHistory(result.items);
       setTotal(result.total);
@@ -149,7 +188,18 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
       setCurrentPage(1);
       loadHistory(1);
     }
-  }, [debouncedSearchKeyword, filterModel, dateRange, quickFilter, filterCharacter]);
+  }, [
+    debouncedSearchKeyword,
+    filterModel,
+    dateRange,
+    quickFilter,
+    filterCharacter,
+    filterWidthMin,
+    filterWidthMax,
+    filterHeightMin,
+    filterHeightMax,
+    filterQuality,
+  ]);
 
   useEffect(() => {
     if (visible) {
@@ -179,6 +229,11 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
         model: filterModel,
         prompt_keyword: searchKeyword,
         character: filterCharacter,
+        width_min: filterWidthMin,
+        width_max: filterWidthMax,
+        height_min: filterHeightMin,
+        height_max: filterHeightMax,
+        quality: filterQuality,
       });
       message.success('筛选方案已保存');
       setSaveFilterModalVisible(false);
@@ -350,6 +405,57 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
     }
   };
 
+  const handleOpenExportPackage = async () => {
+    setExportPackageModalVisible(true);
+    setExportLoading(true);
+    try {
+      const query: any = {
+        start_date: dateRange?.[0]?.toISOString(),
+        end_date: dateRange?.[1]?.toISOString(),
+        model: filterModel,
+        prompt_keyword: searchKeyword,
+        character: filterCharacter,
+      };
+      const data = await previewExportData(query);
+      setExportPreviewData(data);
+    } catch (error) {
+      console.error('预览导出数据失败:', error);
+      message.error('预览导出数据失败');
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  const handleExportPackage = async () => {
+    setExportLoading(true);
+    try {
+      const query: any = {
+        start_date: dateRange?.[0]?.toISOString(),
+        end_date: dateRange?.[1]?.toISOString(),
+        model: filterModel,
+        prompt_keyword: searchKeyword,
+        character: filterCharacter,
+      };
+
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const filePath = await save({
+        defaultPath: `project_export_${dayjs().format('YYYYMMDD_HHmmss')}.zip`,
+        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+      });
+
+      if (filePath) {
+        const result = await createExportPackage(query, filePath);
+        message.success(`项目导出成功！共导出 ${result.record_count} 条记录`);
+        setExportPackageModalVisible(false);
+      }
+    } catch (error) {
+      console.error('导出项目包失败:', error);
+      message.error(`导出项目包失败: ${error}`);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   const handleApplyParams = (record: GenerationHistory) => {
     if (onApplyParams) {
       onApplyParams(record.params);
@@ -365,12 +471,19 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
 
   const handleEditRegenerate = (record: GenerationHistory) => {
     setEditingHistory(record);
-    editForm.setFieldsValue({
+    const formValues: Record<string, unknown> = {
       prompt: record.prompt,
       model: record.model,
       ...record.params,
-    });
+    };
+    if (record.model === 'seedream' && record.params.width && record.params.height) {
+      formValues.size = `${record.params.width}x${record.params.height}`;
+    }
+    editForm.setFieldsValue(formValues);
     setEditModalVisible(true);
+    setTimeout(() => {
+      editForm.setFieldsValue(formValues);
+    }, 100);
   };
 
   const handleEditConfirm = () => {
@@ -389,6 +502,115 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
         onRegenerate(editingHistory, newParams);
         setEditModalVisible(false);
         setEditingHistory(null);
+      });
+    }
+  };
+
+  const handleAddToCompare = (record: GenerationHistory) => {
+    if (compareItems.length >= 2) {
+      message.warning('最多只能选择2条记录进行对比');
+      return;
+    }
+    if (compareItems.some(item => item.id === record.id)) {
+      message.warning('该记录已在对比列表中');
+      return;
+    }
+    setCompareItems([...compareItems, record]);
+  };
+
+  const handleRemoveFromCompare = (id: string) => {
+    setCompareItems(compareItems.filter(item => item.id !== id));
+  };
+
+  const handleClearCompare = () => {
+    setCompareItems([]);
+  };
+
+  const handleCompare = () => {
+    if (compareItems.length !== 2) {
+      message.warning('请选择2条记录进行对比');
+      return;
+    }
+    setCompareModalVisible(true);
+  };
+
+  const computeParamDiff = (item1: GenerationHistory, item2: GenerationHistory) => {
+    const params1 = item1.params || {};
+    const params2 = item2.params || {};
+    const keys = new Set([...Object.keys(params1), ...Object.keys(params2)]);
+    const diffs: Array<{ key: string; value1: string; value2: string; isDifferent: boolean }> = [];
+
+    const formatValue = (val: unknown): string => {
+      if (val === undefined || val === null) return '-';
+      return String(val);
+    };
+
+    const keyLabels: Record<string, string> = {
+      model: '模型',
+      width: '宽度',
+      height: '高度',
+      size: '分辨率',
+      quality: '质量',
+      watermark: '水印',
+      prompt: '提示词',
+    };
+
+    keys.forEach(key => {
+      const val1 = params1[key];
+      const val2 = params2[key];
+      const isDifferent = JSON.stringify(val1) !== JSON.stringify(val2);
+      diffs.push({
+        key: keyLabels[key] || key,
+        value1: formatValue(val1),
+        value2: formatValue(val2),
+        isDifferent,
+      });
+    });
+
+    return diffs;
+  };
+
+  const handleQuickRegenerateFromCompare = (record: GenerationHistory) => {
+    if (onRegenerate) {
+      onRegenerate(record);
+    }
+    setCompareModalVisible(false);
+  };
+
+  const handleEditRegenerateFromCompare = (record: GenerationHistory) => {
+    const formValues: Record<string, unknown> = {
+      prompt: record.prompt,
+      model: record.model,
+      ...record.params,
+    };
+    if (record.model === 'seedream' && record.params.width && record.params.height) {
+      formValues.size = `${record.params.width}x${record.params.height}`;
+    }
+    setCompareEditingItem(record);
+    compareEditForm.setFieldsValue(formValues);
+    setCompareEditModalVisible(true);
+    setTimeout(() => {
+      compareEditForm.setFieldsValue(formValues);
+    }, 100);
+  };
+
+  const handleEditCompareConfirm = () => {
+    if (compareEditingItem && onRegenerate) {
+      compareEditForm.validateFields().then(values => {
+        const newParams = {
+          ...compareEditingItem.params,
+          prompt: values.prompt,
+          model: values.model,
+          width: values.width,
+          height: values.height,
+          quality: values.quality,
+          watermark: values.watermark,
+          size: values.size,
+        };
+        onRegenerate(compareEditingItem, newParams);
+        setCompareEditModalVisible(false);
+        setCompareEditingItem(null);
+        setCompareModalVisible(false);
       });
     }
   };
@@ -444,11 +666,19 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
     {
       title: '操作',
       key: 'action',
-      width: 180,
+      width: 220,
       render: (_, record) => (
         <Space>
           <Button type="text" icon={<EyeOutlined />} onClick={() => handleViewDetail(record)}>
             查看
+          </Button>
+          <Button
+            type="text"
+            icon={<SwapOutlined />}
+            onClick={() => handleAddToCompare(record)}
+            disabled={compareItems.length >= 2 && !compareItems.some(item => item.id === record.id)}
+          >
+            对比
           </Button>
           {onRegenerate && (
             <Button
@@ -525,6 +755,14 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
             >
               导出MD
             </Button>
+            <Button
+              type="primary"
+              icon={<SaveOutlined />}
+              onClick={handleOpenExportPackage}
+              loading={exportLoading}
+            >
+              导出项目包
+            </Button>
           </Space>
           <Pagination
             current={currentPage}
@@ -571,6 +809,56 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
             allowClear
             style={{ minWidth: 100, flex: 1 }}
           />
+          <Input.Group compact>
+            <InputNumber
+              placeholder="宽"
+              value={filterWidthMin}
+              onChange={v => setFilterWidthMin(v || undefined)}
+              min={256}
+              max={2048}
+              style={{ width: 70 }}
+              addonAfter="~"
+            />
+            <InputNumber
+              placeholder="宽"
+              value={filterWidthMax}
+              onChange={v => setFilterWidthMax(v || undefined)}
+              min={256}
+              max={2048}
+              style={{ width: 70 }}
+            />
+          </Input.Group>
+          <Input.Group compact>
+            <InputNumber
+              placeholder="高"
+              value={filterHeightMin}
+              onChange={v => setFilterHeightMin(v || undefined)}
+              min={256}
+              max={2048}
+              style={{ width: 70 }}
+              addonAfter="~"
+            />
+            <InputNumber
+              placeholder="高"
+              value={filterHeightMax}
+              onChange={v => setFilterHeightMax(v || undefined)}
+              min={256}
+              max={2048}
+              style={{ width: 70 }}
+            />
+          </Input.Group>
+          <Select
+            placeholder="质量"
+            value={filterQuality}
+            onChange={setFilterQuality}
+            allowClear
+            style={{ minWidth: 80 }}
+            options={[
+              { value: 'standard', label: '标准' },
+              { value: 'high', label: '高' },
+              { value: 'ultra', label: '超高' },
+            ]}
+          />
           <Select
             placeholder="筛选方案"
             allowClear
@@ -581,6 +869,11 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
                 setFilterModel(filter.model);
                 setSearchKeyword(filter.prompt_keyword || '');
                 setFilterCharacter(filter.character);
+                setFilterWidthMin(filter.width_min);
+                setFilterWidthMax(filter.width_max);
+                setFilterHeightMin(filter.height_min);
+                setFilterHeightMax(filter.height_max);
+                setFilterQuality(filter.quality);
               }
             }}
             options={savedFilters.map(f => ({ value: f.id, label: f.name }))}
@@ -617,6 +910,47 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
           </Space>
         </Flex>
       </div>
+
+      {compareItems.length > 0 && (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: 12,
+            backgroundColor: 'rgba(99, 102, 241, 0.1)',
+            borderRadius: 8,
+            border: '1px solid rgba(99, 102, 241, 0.3)',
+          }}
+        >
+          <Flex align="center" gap="middle" justify="space-between">
+            <Space>
+              <Text strong>已选择对比 ({compareItems.length}/2)：</Text>
+              {compareItems.map((item, idx) => (
+                <Tag
+                  key={item.id}
+                  closable
+                  onClose={() => handleRemoveFromCompare(item.id)}
+                  color="blue"
+                >
+                  {idx + 1}. {item.prompt?.substring(0, 20) || '无提示词'}...
+                </Tag>
+              ))}
+            </Space>
+            <Space>
+              <Button onClick={handleClearCompare} icon={<CloseOutlined />}>
+                清空
+              </Button>
+              <Button
+                type="primary"
+                onClick={handleCompare}
+                disabled={compareItems.length !== 2}
+                icon={<SwapOutlined />}
+              >
+                开始对比
+              </Button>
+            </Space>
+          </Flex>
+        </div>
+      )}
 
       <Spin spinning={loading}>
         {history.length > 0 ? (
@@ -781,7 +1115,15 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
           </Button>,
         ]}
       >
-        <Form form={editForm} layout="vertical">
+        <Form
+          form={editForm}
+          layout="vertical"
+          onValuesChange={(changedValues, allValues) => {
+            if (changedValues.model) {
+              setEditingHistory(prev => (prev ? { ...prev, model: allValues.model } : null));
+            }
+          }}
+        >
           <Form.Item
             name="prompt"
             label="提示词"
@@ -797,29 +1139,40 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
               ]}
             />
           </Form.Item>
-          {editingHistory?.model === 'seedream' && (
-            <>
-              <Form.Item name="width" label="宽度">
-                <InputNumber min={256} max={2048} step={64} style={{ width: '100%' }} />
-              </Form.Item>
-              <Form.Item name="height" label="高度">
-                <InputNumber min={256} max={2048} step={64} style={{ width: '100%' }} />
-              </Form.Item>
-            </>
-          )}
-          {editingHistory?.model === 'banana_pro' && (
-            <Form.Item name="size" label="分辨率">
-              <Select
-                options={[
-                  { value: '1024x1024', label: '1024x1024' },
-                  { value: '1152x896', label: '1152x896' },
-                  { value: '1216x832', label: '1216x832' },
-                  { value: '1344x768', label: '1344x768' },
-                  { value: '1536x640', label: '1536x640' },
-                ]}
-              />
-            </Form.Item>
-          )}
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.model !== curr.model}>
+            {() => {
+              const model = editForm.getFieldValue('model') || editingHistory?.model;
+              if (model === 'seedream') {
+                return (
+                  <Form.Item name="size" label="图片尺寸">
+                    <Select
+                      options={[
+                        { value: '1024x1024', label: '1K (1024x1024)' },
+                        { value: '2048x2048', label: '2K (2048x2048)' },
+                        { value: '4096x4096', label: '4K (4096x4096)' },
+                      ]}
+                    />
+                  </Form.Item>
+                );
+              }
+              if (model === 'banana_pro') {
+                return (
+                  <Form.Item name="size" label="分辨率">
+                    <Select
+                      options={[
+                        { value: '1024x1024', label: '1024x1024' },
+                        { value: '1152x896', label: '1152x896' },
+                        { value: '1216x832', label: '1216x832' },
+                        { value: '1344x768', label: '1344x768' },
+                        { value: '1536x640', label: '1536x640' },
+                      ]}
+                    />
+                  </Form.Item>
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
           <Form.Item name="quality" label="质量">
             <Select
               options={[
@@ -848,6 +1201,344 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
           value={saveFilterName}
           onChange={e => setSaveFilterName(e.target.value)}
         />
+      </Modal>
+
+      <Modal
+        title="结果对比"
+        open={compareModalVisible}
+        onCancel={() => setCompareModalVisible(false)}
+        footer={[
+          <Button key="close" onClick={() => setCompareModalVisible(false)}>
+            关闭
+          </Button>,
+        ]}
+        width="95vw"
+        style={{ maxWidth: 1200 }}
+        closable
+      >
+        {compareItems.length === 2 && (
+          <div>
+            <Flex gap="middle" style={{ marginBottom: 24 }}>
+              <div
+                style={{
+                  flex: 1,
+                  padding: 16,
+                  backgroundColor: 'rgba(99, 102, 241, 0.05)',
+                  borderRadius: 8,
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                }}
+              >
+                <Space style={{ marginBottom: 12 }}>
+                  <Tag color="blue">记录 1</Tag>
+                  <Text type="secondary">
+                    {new Date(compareItems[0].created_at).toLocaleString('zh-CN')}
+                  </Text>
+                </Space>
+                <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 12 }}>
+                  <Text strong>提示词：</Text>
+                  {compareItems[0].prompt}
+                </Paragraph>
+                {compareItems[0].images && compareItems[0].images.length > 0 && (
+                  <Row gutter={[8, 8]}>
+                    {compareItems[0].images.map((img, idx) => (
+                      <Col key={idx} span={12}>
+                        <Image
+                          src={img}
+                          alt={`图片 ${idx + 1}`}
+                          style={{ width: '100%', borderRadius: 4 }}
+                        />
+                      </Col>
+                    ))}
+                  </Row>
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <Space>
+                    <Button
+                      type="primary"
+                      icon={<CheckOutlined />}
+                      onClick={() => handleQuickRegenerateFromCompare(compareItems[0])}
+                    >
+                      一键沿用
+                    </Button>
+                    <Button
+                      icon={<EditOutlined />}
+                      onClick={() => handleEditRegenerateFromCompare(compareItems[0])}
+                    >
+                      编辑后生成
+                    </Button>
+                  </Space>
+                </div>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  padding: 16,
+                  backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                  borderRadius: 8,
+                  border: '1px solid rgba(16, 185, 129, 0.2)',
+                }}
+              >
+                <Space style={{ marginBottom: 12 }}>
+                  <Tag color="green">记录 2</Tag>
+                  <Text type="secondary">
+                    {new Date(compareItems[1].created_at).toLocaleString('zh-CN')}
+                  </Text>
+                </Space>
+                <Paragraph ellipsis={{ rows: 2 }} style={{ marginBottom: 12 }}>
+                  <Text strong>提示词：</Text>
+                  {compareItems[1].prompt}
+                </Paragraph>
+                {compareItems[1].images && compareItems[1].images.length > 0 && (
+                  <Row gutter={[8, 8]}>
+                    {compareItems[1].images.map((img, idx) => (
+                      <Col key={idx} span={12}>
+                        <Image
+                          src={img}
+                          alt={`图片 ${idx + 1}`}
+                          style={{ width: '100%', borderRadius: 4 }}
+                        />
+                      </Col>
+                    ))}
+                  </Row>
+                )}
+                <div style={{ marginTop: 12 }}>
+                  <Space>
+                    <Button
+                      type="primary"
+                      icon={<CheckOutlined />}
+                      onClick={() => handleQuickRegenerateFromCompare(compareItems[1])}
+                    >
+                      一键沿用
+                    </Button>
+                    <Button
+                      icon={<EditOutlined />}
+                      onClick={() => handleEditRegenerateFromCompare(compareItems[1])}
+                    >
+                      编辑后生成
+                    </Button>
+                  </Space>
+                </div>
+              </div>
+            </Flex>
+
+            <div style={{ marginTop: 24 }}>
+              <Text strong style={{ fontSize: 16 }}>
+                参数差异对比：
+              </Text>
+              <Table
+                dataSource={computeParamDiff(compareItems[0], compareItems[1])}
+                columns={[
+                  { title: '参数', dataIndex: 'key', key: 'key', width: 120 },
+                  {
+                    title: '记录 1',
+                    dataIndex: 'value1',
+                    key: 'value1',
+                    render: (val, record) => (
+                      <span
+                        style={{
+                          color: record.isDifferent ? '#ef4444' : undefined,
+                          fontWeight: record.isDifferent ? 'bold' : undefined,
+                        }}
+                      >
+                        {val}
+                      </span>
+                    ),
+                  },
+                  {
+                    title: '记录 2',
+                    dataIndex: 'value2',
+                    key: 'value2',
+                    render: (val, record) => (
+                      <span
+                        style={{
+                          color: record.isDifferent ? '#10b981' : undefined,
+                          fontWeight: record.isDifferent ? 'bold' : undefined,
+                        }}
+                      >
+                        {val}
+                      </span>
+                    ),
+                  },
+                  {
+                    title: '差异',
+                    key: 'diff',
+                    render: (_, record) =>
+                      record.isDifferent ? <Tag color="orange">有差异</Tag> : <Tag>相同</Tag>,
+                  },
+                ]}
+                rowKey="key"
+                pagination={false}
+                size="small"
+                style={{ marginTop: 12 }}
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="编辑参数重新生成"
+        open={compareEditModalVisible}
+        onCancel={() => {
+          setCompareEditModalVisible(false);
+          setCompareEditingItem(null);
+        }}
+        okText="开始生成"
+        cancelText="取消"
+        width="95vw"
+        style={{ maxWidth: 600 }}
+        maskClosable={false}
+        closable
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setCompareEditModalVisible(false);
+              setCompareEditingItem(null);
+            }}
+          >
+            取消
+          </Button>,
+          <Button key="ok" type="primary" onClick={handleEditCompareConfirm}>
+            开始生成
+          </Button>,
+        ]}
+      >
+        <Form
+          form={compareEditForm}
+          layout="vertical"
+          onValuesChange={(changedValues, allValues) => {
+            if (changedValues.model) {
+              setCompareEditingItem(prev => (prev ? { ...prev, model: allValues.model } : null));
+            }
+          }}
+        >
+          <Form.Item
+            name="prompt"
+            label="提示词"
+            rules={[{ required: true, message: '请输入提示词' }]}
+          >
+            <Input.TextArea rows={4} placeholder="输入图像描述" />
+          </Form.Item>
+          <Form.Item name="model" label="模型">
+            <Select
+              options={[
+                { value: 'seedream', label: 'Seedream' },
+                { value: 'banana_pro', label: 'Banana Pro' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.model !== curr.model}>
+            {() => {
+              const model = compareEditForm.getFieldValue('model') || compareEditingItem?.model;
+              if (model === 'seedream') {
+                return (
+                  <Form.Item name="size" label="图片尺寸">
+                    <Select
+                      options={[
+                        { value: '1024x1024', label: '1K (1024x1024)' },
+                        { value: '2048x2048', label: '2K (2048x2048)' },
+                        { value: '4096x4096', label: '4K (4096x4096)' },
+                      ]}
+                    />
+                  </Form.Item>
+                );
+              }
+              if (model === 'banana_pro') {
+                return (
+                  <Form.Item name="size" label="分辨率">
+                    <Select
+                      options={[
+                        { value: '1024x1024', label: '1024x1024' },
+                        { value: '1152x896', label: '1152x896' },
+                        { value: '1216x832', label: '1216x832' },
+                        { value: '1344x768', label: '1344x768' },
+                        { value: '1536x640', label: '1536x640' },
+                      ]}
+                    />
+                  </Form.Item>
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
+          <Form.Item name="quality" label="质量">
+            <Select
+              options={[
+                { value: 'standard', label: '标准' },
+                { value: 'high', label: '高' },
+                { value: 'ultra', label: '超高' },
+              ]}
+            />
+          </Form.Item>
+          <Form.Item name="watermark" label="水印" valuePropName="checked">
+            <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="导出项目包"
+        open={exportPackageModalVisible}
+        onCancel={() => setExportPackageModalVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setExportPackageModalVisible(false)}>
+            取消
+          </Button>,
+          <Button
+            key="export"
+            type="primary"
+            icon={<SaveOutlined />}
+            onClick={handleExportPackage}
+            loading={exportLoading}
+            disabled={exportPreviewData.length === 0}
+          >
+            确认导出 ZIP
+          </Button>,
+        ]}
+        width={700}
+      >
+        <Spin spinning={exportLoading}>
+          <div style={{ marginBottom: 16 }}>
+            <Text type="secondary">
+              将导出当前筛选条件下的 {exportPreviewData.length} 条记录，包含图片、提示词、参数等信息
+            </Text>
+          </div>
+          <div style={{ maxHeight: 400, overflow: 'auto' }}>
+            {exportPreviewData.slice(0, 20).map((record: any, index: number) => (
+              <div
+                key={record.id}
+                style={{
+                  padding: '8px 12px',
+                  borderBottom: '1px solid #f0f0f0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                }}
+              >
+                <Text type="secondary">{index + 1}.</Text>
+                <div style={{ flex: 1 }}>
+                  <div>
+                    <Tag color="blue">{record.model}</Tag>
+                    <Text type="secondary">
+                      {record.width}x{record.height} | {record.quality}
+                    </Text>
+                  </div>
+                  <Text type="secondary" ellipsis style={{ maxWidth: 400 }}>
+                    {record.prompt?.substring(0, 50)}...
+                  </Text>
+                </div>
+                {record.image_filename && <Tag color="green">有图片</Tag>}
+              </div>
+            ))}
+            {exportPreviewData.length > 20 && (
+              <div style={{ padding: 8, textAlign: 'center' }}>
+                <Text type="secondary">...还有 {exportPreviewData.length - 20} 条记录</Text>
+              </div>
+            )}
+          </div>
+          {exportPreviewData.length === 0 && <Empty description="没有符合条件的记录" />}
+        </Spin>
       </Modal>
     </Modal>
   );

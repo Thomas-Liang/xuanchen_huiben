@@ -156,8 +156,96 @@ export interface PromptTemplate {
   name: string;
   content: string;
   category: string;
+  group: string;
+  is_favorite: boolean;
+  is_builtin: boolean;
   variables: string[];
   usage_count: number;
   created_at: string;
   updated_at: string;
+}
+
+// US-26: Intelligent Reference Library Organization
+
+export interface ImageFeature {
+  hash: string;
+  avg_color: string;
+  width: number;
+  height: number;
+  file_size: number;
+  extracted_at: string;
+}
+
+export interface DuplicateCandidate {
+  id: string;
+  source_binding_id: string;
+  target_binding_id: string;
+  source_image_path: string;
+  target_image_path: string;
+  similarity: number;
+  confidence: 'high' | 'medium' | 'low';
+  match_reasons: string[];
+}
+
+export interface TagSuggestion {
+  tag: string;
+  confidence: number;
+  reason: string;
+  applicable_binding_ids: string[];
+}
+
+export interface OrganizationSuggestion {
+  id: string;
+  type: 'duplicate' | 'tag_suggestion' | 'merge_candidate';
+  title: string;
+  description: string;
+  confidence: number;
+  suggested_action: 'merge' | 'delete' | 'keep_both' | 'add_tag' | 'no_action';
+  preview_data: {
+    duplicate?: DuplicateCandidate;
+    tag_suggestion?: TagSuggestion;
+  };
+  created_at: string;
+  processed: boolean;
+}
+
+export interface OrganizationResult {
+  success: boolean;
+  suggestions: OrganizationSuggestion[];
+  duplicates_found: number;
+  tag_suggestions_count: number;
+  processing_time_ms: number;
+}
+
+export interface BatchOperation {
+  id: string;
+  operation_type: 'merge' | 'delete' | 'add_tags' | 'remove_tags';
+  target_binding_ids: string[];
+  parameters: Record<string, unknown>;
+  preview: {
+    affected_count: number;
+    will_delete: string[];
+    will_merge: { source: string; target: string }[];
+    will_add_tags: Record<string, string[]>;
+  };
+  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
+  created_at: string;
+  executed_at?: string;
+}
+
+export interface OperationLog {
+  id: string;
+  operation_type: string;
+  target_binding_ids: string[];
+  before_state: Record<string, unknown>;
+  after_state: Record<string, unknown>;
+  can_undo: boolean;
+  created_at: string;
+  undone_at?: string;
+}
+
+export interface UndoResult {
+  success: boolean;
+  restored_count: number;
+  message: string;
 }

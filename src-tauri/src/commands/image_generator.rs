@@ -392,6 +392,62 @@ pub async fn generate_image(
         .await,
         _ => Err("不支持的模型".to_string()),
     };
+
+    // After getting images, save them to local filesystem
+    let saved_image_paths = match result {
+        Ok((ref images, ref notice)) if !images.is_empty() => {
+            let app_dir = crate::storage::get_app_data_dir();
+            let generated_dir = app_dir.join("generated_images");
+            if !generated_dir.exists() {
+                fs::create_dir_all(&generated_dir).ok();
+            }
+
+            let mut saved_paths = Vec::new();
+            for (idx, img_url) in images.iter().enumerate() {
+                let filename = format!("{}_{}.png", params.model, chrono::Utc::now().timestamp_millis() + idx as i64);
+                let filepath = generated_dir.join(&filename);
+
+                // Download and save the image
+                if img_url.starts_with("http") {
+                    // It's a URL, download it
+                    match reqwest::get(img_url).await {
+                        Ok(resp) => {
+                            if let Ok(bytes) = resp.bytes().await {
+                                if let Err(e) = fs::write(&filepath, &bytes) {
+                                    eprintln!("Failed to write image {}: {}", filepath.display(), e);
+                                } else {
+                                    saved_paths.push(filename);
+                                }
+                            } else {
+                                eprintln!("Failed to get bytes from response for image");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to download image: {}", e);
+                        }
+                    }
+                } else if img_url.starts_with("data:") {
+                    // It's base64 data
+                    if let Some(base64_data) = img_url.split(',').nth(1) {
+                        use base64::{Engine as _, engine::general_purpose::STANDARD};
+                        if let Ok(decoded) = STANDARD.decode(base64_data) {
+                            if let Err(e) = fs::write(&filepath, &decoded) {
+                                eprintln!("Failed to write base64 image {}: {}", filepath.display(), e);
+                            } else {
+                                saved_paths.push(filename);
+                            }
+                        } else {
+                            eprintln!("Failed to decode base64 data");
+                        }
+                    }
+                } else {
+                    eprintln!("Unknown image format: {}", &img_url[..img_url.len().min(100)]);
+                }
+            }
+            Some(saved_paths)
+        }
+        _ => None,
+    };
     
     match result {
         Ok((images, notice)) => {
@@ -402,9 +458,20 @@ pub async fn generate_image(
                 tasks.remove(&task_id);
             }
             
+            // Use saved local paths if available and not empty, otherwise use original URLs
+            let final_images = if let Some(ref paths) = saved_image_paths {
+                if paths.is_empty() {
+                    images.clone()
+                } else {
+                    paths.clone()
+                }
+            } else {
+                images.clone()
+            };
+            
             Ok(ImageGenerationResult {
                 success: true,
-                images,
+                images: final_images,
                 task_id,
                 error: None,
                 notice,

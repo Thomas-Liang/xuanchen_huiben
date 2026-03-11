@@ -81,6 +81,11 @@ fn get_history(
     start_date: Option<String>,
     end_date: Option<String>,
     character: Option<String>,
+    width_min: Option<u32>,
+    width_max: Option<u32>,
+    height_min: Option<u32>,
+    height_max: Option<u32>,
+    quality: Option<String>,
 ) -> Result<storage::GenerationHistoryList, String> {
     let filter = storage::HistoryFilter {
         model,
@@ -88,6 +93,11 @@ fn get_history(
         start_date,
         end_date,
         character,
+        width_min,
+        width_max,
+        height_min,
+        height_max,
+        quality,
     };
     storage::get_history(page, page_size, Some(filter))
 }
@@ -137,6 +147,50 @@ fn update_character_binding(id: String, binding: storage::CharacterBindingData) 
 #[tauri::command]
 fn delete_character_binding(id: String) -> Result<(), String> {
     storage::delete_character_binding(&id)
+}
+
+// ==================== Image Organization Commands ====================
+
+#[tauri::command]
+fn analyze_reference_library() -> Result<commands::image_organization::OrganizationSuggestion, String> {
+    let bindings = storage::get_all_character_bindings()?;
+    commands::image_organization::analyze_reference_library(&bindings)
+}
+
+#[tauri::command]
+fn execute_organization_action(action: commands::image_organization::OrganizationActionRequest) -> Result<commands::image_organization::OrganizationActionLog, String> {
+    commands::image_organization::execute_organization_action(action)
+}
+
+#[tauri::command]
+fn undo_organization_action(log_id: String) -> Result<commands::image_organization::OrganizationActionLog, String> {
+    commands::image_organization::undo_organization_action(log_id)
+}
+
+#[tauri::command]
+fn get_organization_action_log() -> Vec<commands::image_organization::OrganizationActionLog> {
+    commands::image_organization::get_organization_action_log()
+}
+
+#[tauri::command]
+fn delete_duplicate_images(character_names: Vec<String>, keep_representative: bool) -> Result<usize, String> {
+    commands::image_organization::delete_duplicate_images(character_names, keep_representative)
+}
+
+// ==================== Export Package Commands (US-27) ====================
+
+#[tauri::command]
+fn create_export_package(
+    query: commands::export_package::ExportQuery,
+    output_path: String,
+    package_name: Option<String>,
+) -> Result<commands::export_package::ExportPackage, String> {
+    commands::export_package::create_export_package(query, &output_path, package_name)
+}
+
+#[tauri::command]
+fn preview_export_data(query: commands::export_package::ExportQuery) -> Result<Vec<commands::export_package::ExportRecord>, String> {
+    commands::export_package::collect_export_data(query)
 }
 
 // ==================== Template Commands ====================
@@ -201,6 +255,29 @@ fn delete_prompt_template(id: String) -> Result<(), String> {
 #[tauri::command]
 fn increment_template_usage(id: String) -> Result<(), String> {
     storage::increment_template_usage(&id)
+}
+
+#[tauri::command]
+fn update_prompt_template_favorite(id: String, is_favorite: bool) -> Result<storage::PromptTemplate, String> {
+    storage::update_prompt_template_favorite(&id, is_favorite)
+}
+
+#[tauri::command]
+fn update_prompt_template_group(id: String, group: String) -> Result<storage::PromptTemplate, String> {
+    storage::update_prompt_template_group(&id, &group)
+}
+
+#[tauri::command]
+fn export_prompt_templates(ids: Vec<String>) -> Result<String, String> {
+    let templates = storage::get_all_prompt_templates()?;
+    let filtered: Vec<_> = templates.into_iter().filter(|t| ids.contains(&t.id)).collect();
+    serde_json::to_string_pretty(&filtered).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn import_prompt_templates(json_data: String, strategy: String) -> Result<storage::ImportResult, String> {
+    let templates: Vec<storage::PromptTemplate> = serde_json::from_str(&json_data).map_err(|e| e.to_string())?;
+    storage::import_prompt_templates(templates, &strategy)
 }
 
 #[tauri::command]
@@ -423,6 +500,10 @@ pub async fn main() {
             update_prompt_template,
             delete_prompt_template,
             increment_template_usage,
+            update_prompt_template_favorite,
+            update_prompt_template_group,
+            export_prompt_templates,
+            import_prompt_templates,
             add_prompt_history,
             get_prompt_history,
             delete_prompt_history,
@@ -430,6 +511,15 @@ pub async fn main() {
             add_saved_filter,
             get_saved_filters,
             delete_saved_filter,
+            // Image Organization
+            analyze_reference_library,
+            execute_organization_action,
+            undo_organization_action,
+            get_organization_action_log,
+            delete_duplicate_images,
+            // Export Package (US-27)
+            create_export_package,
+            preview_export_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

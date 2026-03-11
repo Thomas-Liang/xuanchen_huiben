@@ -135,6 +135,7 @@ interface GenerationQueueTask {
     mockFailAt: number | null;
     characterBindings: Record<string, CharacterBinding>;
     parsedCharacters: string[];
+    sourceHistoryId?: string;
   };
   progress: {
     total: number;
@@ -770,6 +771,7 @@ function MainApp() {
               images: result.images || [],
               characters: task.payload.parsedCharacters,
               status: result.success ? 'completed' : 'failed',
+              source_history_id: task.payload.sourceHistoryId,
               created_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             });
@@ -1188,27 +1190,56 @@ function MainApp() {
 
     setHistoryModalVisible(false);
 
-    if (params.prompt) setPrompt(params.prompt);
-    if (params.model) setSelectedModel(params.model as 'seedream' | 'banana_pro');
-    if (params.quality) setImageQuality(params.quality as 'standard' | 'high' | 'ultra');
-    if (params.watermark !== undefined) setWatermark(params.watermark.toString());
+    const segments = [{ index: 0, content: params.prompt, characters: [] }];
+    const normalizedSegments = segments.map((seg, idx) => ({
+      index: seg.index ?? idx,
+      content: seg.content,
+      characters: (seg.characters || []).map((char: any) => ({ name: char.name })),
+    }));
 
-    if (params.model === 'seedream' && params.width && params.height) {
-      setSeedreamSize(`${params.width}x${params.height}`);
-    } else if (params.model === 'banana_pro' && params.size) {
-      setBananaResolution(params.size);
-    }
+    const task: GenerationQueueTask = {
+      id: `queue_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: `历史记录重生成 ${dayjs().format('HH:mm:ss')}`,
+      mode: 'single',
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      total: 1,
+      current: 0,
+      elapsedMs: 0,
+      payload: {
+        segments: normalizedSegments,
+        model: params.model,
+        imageQuality: params.quality || 'standard',
+        watermark: params.watermark?.toString() || 'false',
+        bananaResolution: params.size || '1024x1024',
+        seedreamSize:
+          params.width && params.height ? `${params.width}x${params.height}` : '1024x1024',
+        imageSize:
+          params.width && params.height
+            ? { width: params.width, height: params.height }
+            : { width: 1, height: 1 },
+        concurrency: 1,
+        batchMode: false,
+        failStrategy: 'continue',
+        testMode: false,
+        mockDelayMs: 0,
+        mockFailAt: null,
+        characterBindings: {},
+        parsedCharacters: history.characters || [],
+        sourceHistoryId: history.id,
+      },
+      progress: {
+        total: 1,
+        current: 0,
+        sceneResults: [{ index: 0, status: 'pending' }],
+      },
+    };
 
-    if (params.width && params.height) {
-      const w = params.width;
-      const h = params.height;
-      if (w === h) setImageSize({ width: 1, height: 1 });
-      else if (w > h) setImageSize({ width: 16, height: 9 });
-      else setImageSize({ width: 9, height: 16 });
-    }
-
+    setGenerationQueue(prev => [...prev, task]);
     setCurrentPage('workspace');
-    message.success('已应用参数，请点击生成按钮');
+    setQueueModalVisible(true);
+    message.success('已加入任务队列，将使用历史记录参数重新生成');
   };
 
   const handleNavigate = (page: string) => {

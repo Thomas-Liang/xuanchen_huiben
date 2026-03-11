@@ -44,6 +44,7 @@ pub struct GenerationHistory {
     pub images: Vec<String>,
     pub characters: Vec<String>,
     pub status: String,
+    pub source_history_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -75,6 +76,28 @@ impl GenerationHistory {
             images: vec![],
             characters: vec![],
             status: "pending".to_string(),
+            source_history_id: None,
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    pub fn new_with_source(
+        prompt: String,
+        model: String,
+        params: serde_json::Value,
+        source_history_id: Option<String>,
+    ) -> Self {
+        let now = get_current_datetime();
+        Self {
+            id: format!("gen_{}", get_current_timestamp()),
+            prompt,
+            model,
+            params,
+            images: vec![],
+            characters: vec![],
+            status: "pending".to_string(),
+            source_history_id,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -420,6 +443,11 @@ pub struct HistoryFilter {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub character: Option<String>,
+    pub width_min: Option<u32>,
+    pub width_max: Option<u32>,
+    pub height_min: Option<u32>,
+    pub height_max: Option<u32>,
+    pub quality: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -431,6 +459,11 @@ pub struct SavedFilter {
     pub start_date: Option<String>,
     pub end_date: Option<String>,
     pub character: Option<String>,
+    pub width_min: Option<u32>,
+    pub width_max: Option<u32>,
+    pub height_min: Option<u32>,
+    pub height_max: Option<u32>,
+    pub quality: Option<String>,
     pub created_at: String,
 }
 
@@ -508,6 +541,43 @@ pub fn get_history(
                         .any(|c| c.to_lowercase().contains(&character.to_lowercase()))
                 });
             }
+        }
+
+        if let Some(quality) = &f.quality {
+            if !quality.is_empty() {
+                items.retain(|h| {
+                    let hist_quality = h
+                        .params
+                        .get("quality")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    hist_quality == *quality
+                });
+            }
+        }
+
+        if let (Some(w_min), Some(w_max)) = (f.width_min, f.width_max) {
+            items.retain(|h| {
+                let w = h
+                    .params
+                    .get("width")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or(0);
+                w >= w_min && w <= w_max
+            });
+        }
+
+        if let (Some(h_min), Some(h_max)) = (f.height_min, f.height_max) {
+            items.retain(|h| {
+                let height = h
+                    .params
+                    .get("height")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32)
+                    .unwrap_or(0);
+                height >= h_min && height <= h_max
+            });
         }
     }
 
@@ -617,7 +687,7 @@ pub fn delete_character_binding(id: &str) -> Result<(), String> {
     }
 }
 
-// ==================== Prompt Template (US-13) ====================
+// ==================== Prompt Template (US-13, US-25) ====================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptTemplate {
@@ -625,6 +695,10 @@ pub struct PromptTemplate {
     pub name: String,
     pub content: String,
     pub category: String,
+    #[serde(default)]
+    pub group: String,
+    pub is_favorite: bool,
+    pub is_builtin: bool,
     pub variables: Vec<String>,
     pub usage_count: u32,
     pub created_at: String,
@@ -645,10 +719,25 @@ pub struct PromptTemplatePayload {
     pub name: String,
     pub content: String,
     pub category: String,
+    pub group: Option<String>,
+    pub is_favorite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+    pub errors: Vec<String>,
 }
 
 impl PromptTemplate {
-    pub fn new(name: String, content: String, category: String) -> Self {
+    pub fn new(
+        name: String,
+        content: String,
+        category: String,
+        group: Option<String>,
+        is_favorite: Option<bool>,
+    ) -> Self {
         let now = get_current_datetime();
         let variables = extract_variables(&content);
         Self {
@@ -656,6 +745,9 @@ impl PromptTemplate {
             name,
             content,
             category,
+            group: group.unwrap_or_else(|| "默认".to_string()),
+            is_favorite: is_favorite.unwrap_or(false),
+            is_builtin: false,
             variables,
             usage_count: 0,
             created_at: now.clone(),
@@ -665,27 +757,49 @@ impl PromptTemplate {
 }
 
 fn get_builtin_prompt_templates() -> Vec<PromptTemplate> {
-    let mut t1 = PromptTemplate::new(
-        "儿童绘本场景模板".to_string(),
-        "儿童绘本风格，柔和光线，温暖色彩，在{地点}，{人物}正在{动作}，画面干净，构图清晰，适合3-8岁阅读".to_string(),
-        "通用".to_string(),
-    );
-    t1.id = "ptpl_builtin_storybook".to_string();
+    let now = get_current_datetime();
 
-    let mut t2 = PromptTemplate::new(
-        "国风插画模板".to_string(),
-        "国风插画，细腻笔触，留白构图，{人物}身处{场景}，动作是{动作}，服饰与环境统一，画面有诗意氛围".to_string(),
-        "风格".to_string(),
-    );
-    t2.id = "ptpl_builtin_guofeng".to_string();
+    let t1 = PromptTemplate {
+        id: "ptpl_builtin_storybook".to_string(),
+        name: "儿童绘本场景模板".to_string(),
+        content: "儿童绘本风格，柔和光线，温暖色彩，在{地点}，{人物}正在{动作}，画面干净，构图清晰，适合3-8岁阅读".to_string(),
+        category: "通用".to_string(),
+        group: "内置".to_string(),
+        is_favorite: false,
+        is_builtin: true,
+        variables: vec!["地点".to_string(), "人物".to_string(), "动作".to_string()],
+        usage_count: 0,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
 
-    let mut t3 = PromptTemplate::new(
-        "电影感写实模板".to_string(),
-        "电影感写实风格，镜头语言明确，{人物}在{地点}执行{动作}，景深自然，光影对比清楚，细节真实"
-            .to_string(),
-        "场景".to_string(),
-    );
-    t3.id = "ptpl_builtin_cinematic".to_string();
+    let t2 = PromptTemplate {
+        id: "ptpl_builtin_guofeng".to_string(),
+        name: "国风插画模板".to_string(),
+        content: "国风插画，细腻笔触，留白构图，{人物}身处{场景}，动作是{动作}，服饰与环境统一，画面有诗意氛围".to_string(),
+        category: "风格".to_string(),
+        group: "内置".to_string(),
+        is_favorite: false,
+        is_builtin: true,
+        variables: vec!["人物".to_string(), "场景".to_string(), "动作".to_string()],
+        usage_count: 0,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
+
+    let t3 = PromptTemplate {
+        id: "ptpl_builtin_cinematic".to_string(),
+        name: "电影感写实模板".to_string(),
+        content: "电影感写实风格，镜头语言明确，{人物}在{地点}执行{动作}，景深自然，光影对比清楚，细节真实".to_string(),
+        category: "场景".to_string(),
+        group: "内置".to_string(),
+        is_favorite: false,
+        is_builtin: true,
+        variables: vec!["人物".to_string(), "地点".to_string(), "动作".to_string()],
+        usage_count: 0,
+        created_at: now.clone(),
+        updated_at: now.clone(),
+    };
 
     vec![t1, t2, t3]
 }
@@ -713,7 +827,13 @@ fn extract_variables(content: &str) -> Vec<String> {
 }
 
 pub fn add_prompt_template(payload: PromptTemplatePayload) -> Result<PromptTemplate, String> {
-    let template = PromptTemplate::new(payload.name, payload.content, payload.category);
+    let template = PromptTemplate::new(
+        payload.name,
+        payload.content,
+        payload.category,
+        payload.group,
+        payload.is_favorite,
+    );
     let mut db = Storage::load_database()?;
     db.prompt_templates.push(template.clone());
     Storage::save_database(&db)?;
@@ -737,6 +857,9 @@ pub fn update_prompt_template(
     let mut db = Storage::load_database()?;
     if let Some(idx) = db.prompt_templates.iter().position(|t| t.id == id) {
         let existing = &db.prompt_templates[idx];
+        if existing.is_builtin {
+            return Err("内置模板不可修改".to_string());
+        }
         let mut template = existing.clone();
         template.name = payload.name;
         template.content = payload.content;
@@ -751,8 +874,48 @@ pub fn update_prompt_template(
     }
 }
 
+pub fn update_prompt_template_favorite(
+    id: &str,
+    is_favorite: bool,
+) -> Result<PromptTemplate, String> {
+    let mut db = Storage::load_database()?;
+    if let Some(idx) = db.prompt_templates.iter().position(|t| t.id == id) {
+        let mut template = db.prompt_templates[idx].clone();
+        template.is_favorite = is_favorite;
+        template.updated_at = get_current_datetime();
+        db.prompt_templates[idx] = template.clone();
+        Storage::save_database(&db)?;
+        Ok(template)
+    } else {
+        Err("模板不存在".to_string())
+    }
+}
+
+pub fn update_prompt_template_group(id: &str, group: &str) -> Result<PromptTemplate, String> {
+    let mut db = Storage::load_database()?;
+    if let Some(idx) = db.prompt_templates.iter().position(|t| t.id == id) {
+        let existing = &db.prompt_templates[idx];
+        if existing.is_builtin {
+            return Err("内置模板不可修改分组".to_string());
+        }
+        let mut template = existing.clone();
+        template.group = group.to_string();
+        template.updated_at = get_current_datetime();
+        db.prompt_templates[idx] = template.clone();
+        Storage::save_database(&db)?;
+        Ok(template)
+    } else {
+        Err("模板不存在".to_string())
+    }
+}
+
 pub fn delete_prompt_template(id: &str) -> Result<(), String> {
     let mut db = Storage::load_database()?;
+    if let Some(template) = db.prompt_templates.iter().find(|t| t.id == id) {
+        if template.is_builtin {
+            return Err("内置模板不可删除".to_string());
+        }
+    }
     let original_len = db.prompt_templates.len();
     db.prompt_templates.retain(|t| t.id != id);
     if db.prompt_templates.len() < original_len {
@@ -770,6 +933,60 @@ pub fn increment_template_usage(id: &str) -> Result<(), String> {
         Storage::save_database(&db)?;
     }
     Ok(())
+}
+
+pub fn import_prompt_templates(
+    templates: Vec<PromptTemplate>,
+    strategy: &str,
+) -> Result<ImportResult, String> {
+    let mut db = Storage::load_database()?;
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut errors = Vec::new();
+
+    for mut template in templates {
+        let existing = db.prompt_templates.iter().find(|t| t.id == template.id);
+
+        match strategy {
+            "skip" => {
+                if existing.is_some() {
+                    skipped += 1;
+                    continue;
+                }
+            }
+            "overwrite" => {
+                if let Some(idx) = db.prompt_templates.iter().position(|t| t.id == template.id) {
+                    template.is_builtin = db.prompt_templates[idx].is_builtin;
+                    template.usage_count = db.prompt_templates[idx].usage_count;
+                    template.created_at = db.prompt_templates[idx].created_at.clone();
+                    db.prompt_templates[idx] = template.clone();
+                    imported += 1;
+                    continue;
+                }
+            }
+            "rename" => {
+                if existing.is_some() {
+                    template.id = format!("{}_{}", template.id, get_current_timestamp());
+                }
+            }
+            _ => {
+                errors.push(format!("未知策略: {}", strategy));
+                continue;
+            }
+        }
+
+        template.is_builtin = false;
+        template.id = format!("ptpl_{}", get_current_timestamp());
+        db.prompt_templates.push(template);
+        imported += 1;
+    }
+
+    Storage::save_database(&db)?;
+    Ok(ImportResult {
+        imported,
+        skipped,
+        errors,
+    })
 }
 
 pub fn add_prompt_history(prompt: String) -> Result<PromptHistoryItem, String> {
@@ -935,6 +1152,11 @@ pub fn add_saved_filter(filter: SavedFilter) -> Result<SavedFilter, String> {
         start_date: filter.start_date,
         end_date: filter.end_date,
         character: filter.character,
+        width_min: filter.width_min,
+        width_max: filter.width_max,
+        height_min: filter.height_min,
+        height_max: filter.height_max,
+        quality: filter.quality,
         created_at: get_current_datetime(),
     };
     db.saved_filters.push(new_filter.clone());

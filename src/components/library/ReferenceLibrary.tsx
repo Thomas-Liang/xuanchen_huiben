@@ -30,6 +30,7 @@ import {
   CheckSquareOutlined,
   FolderOpenOutlined,
   TagsOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import type { CharacterBinding } from '../../types';
 import * as api from '../../api';
@@ -122,6 +123,13 @@ export function ReferenceLibrary({
   const [uploadedImage, setUploadedImage] = useState('');
   const [uploadLoading, setUploadLoading] = useState(false);
   const [uploadTargetFolderId, setUploadTargetFolderId] = useState<string | null>(null);
+
+  // 智能整理相关状态
+  const [organizationModalVisible, setOrganizationModalVisible] = useState(false);
+  const [organizationLoading, setOrganizationLoading] = useState(false);
+  const [organizationData, setOrganizationData] = useState<api.OrganizationSuggestion | null>(null);
+  const [actionLogs, setActionLogs] = useState<api.OrganizationActionLog[]>([]);
+  const [selectedDuplicates, setSelectedDuplicates] = useState<string[]>([]);
 
   useEffect(() => {
     if (visible) {
@@ -527,6 +535,84 @@ export function ReferenceLibrary({
     setTimeout(() => onLoadReferenceImages(), 0);
   };
 
+  const handleAnalyzeLibrary = async () => {
+    setOrganizationLoading(true);
+    try {
+      const data = await api.analyzeReferenceLibrary();
+      setOrganizationData(data);
+      const logs = await api.getOrganizationActionLog();
+      setActionLogs(logs);
+      setOrganizationModalVisible(true);
+    } catch (error) {
+      console.error('分析图库失败:', error);
+      message.error(`分析图库失败: ${error}`);
+    } finally {
+      setOrganizationLoading(false);
+    }
+  };
+
+  const handleApplyTagSuggestion = async (characterName: string, tags: string[]) => {
+    try {
+      await api.executeOrganizationAction({
+        action_type: 'apply_tags',
+        target: characterName,
+        new_tags: tags,
+      });
+      message.success(`已为 ${characterName} 应用标签建议`);
+      const logs = await api.getOrganizationActionLog();
+      setActionLogs(logs);
+      onLoadReferenceImages();
+      onLoadAllTags();
+    } catch (error) {
+      console.error('应用标签建议失败:', error);
+      message.error(`应用标签建议失败: ${error}`);
+    }
+  };
+
+  const handleDeleteDuplicates = async (keepRepresentative: boolean) => {
+    if (selectedDuplicates.length === 0) {
+      message.warning('请选择要删除的重复项');
+      return;
+    }
+    setOrganizationLoading(true);
+    try {
+      const count = await api.deleteDuplicateImages(selectedDuplicates, keepRepresentative);
+      message.success(`成功删除 ${count} 个重复项`);
+      setSelectedDuplicates([]);
+      const data = await api.analyzeReferenceLibrary();
+      setOrganizationData(data);
+    } catch (error) {
+      console.error('删除重复图片失败:', error);
+      message.error(`删除重复图片失败: ${error}`);
+    } finally {
+      setOrganizationLoading(false);
+    }
+  };
+
+  const handleUndoAction = async (logId: string) => {
+    try {
+      await api.undoOrganizationAction(logId);
+      message.success('已撤销操作');
+      const logs = await api.getOrganizationActionLog();
+      setActionLogs(logs);
+      onLoadReferenceImages();
+      onLoadAllTags();
+    } catch (error) {
+      console.error('撤销操作失败:', error);
+      message.error(`撤销操作失败: ${error}`);
+    }
+  };
+
+  const toggleDuplicateSelection = (characterName: string) => {
+    setSelectedDuplicates(prev => {
+      if (prev.includes(characterName)) {
+        return prev.filter(name => name !== characterName);
+      } else {
+        return [...prev, characterName];
+      }
+    });
+  };
+
   const tagOptions = [...presetTags, ...allTags.filter(t => !presetTags.includes(t))].map(t => ({
     value: t,
     label: t,
@@ -678,6 +764,14 @@ export function ReferenceLibrary({
                         size="large"
                       >
                         新建文件夹
+                      </Button>
+                      <Button
+                        icon={<RobotOutlined />}
+                        onClick={handleAnalyzeLibrary}
+                        loading={organizationLoading}
+                        size="large"
+                      >
+                        智能整理
                       </Button>
                     </>
                   )}
@@ -1088,6 +1182,151 @@ export function ReferenceLibrary({
             </Tag>
           ))}
         </div>
+      </Modal>
+
+      <Modal
+        title="智能整理建议"
+        open={organizationModalVisible}
+        onCancel={() => setOrganizationModalVisible(false)}
+        footer={null}
+        width={900}
+      >
+        <Spin spinning={organizationLoading}>
+          {organizationData && (
+            <div>
+              <div className="mb-4">
+                <Text type="secondary">
+                  共 {organizationData.total_images} 张图片，发现 {organizationData.duplicate_count}{' '}
+                  个重复项
+                </Text>
+              </div>
+
+              {organizationData.duplicates.length > 0 && (
+                <div className="mb-6">
+                  <Text strong className="block mb-2">
+                    重复图片检测
+                  </Text>
+                  {organizationData.duplicates.map((group, idx) => (
+                    <Card key={idx} size="small" className="mb-2">
+                      <div className="flex justify-between items-center mb-2">
+                        <Text>
+                          相似度: <Text type="success">{group.similarity.toFixed(1)}%</Text>
+                        </Text>
+                        <Tag color="orange">{group.suggested_action}</Tag>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
+                        <div className="text-center">
+                          <Image
+                            src={api.getImageUrl(group.representative.image_path)}
+                            width={80}
+                            height={80}
+                            style={{ objectFit: 'cover' }}
+                          />
+                          <div>
+                            <Text type="secondary">{group.representative.character_name}</Text>
+                          </div>
+                          <Tag color="blue">保留</Tag>
+                        </div>
+                        {group.duplicates.map(dup => (
+                          <div key={dup.character_name} className="text-center">
+                            <Checkbox
+                              checked={selectedDuplicates.includes(dup.character_name)}
+                              onChange={() => toggleDuplicateSelection(dup.character_name)}
+                            />
+                            <Image
+                              src={api.getImageUrl(dup.image_path)}
+                              width={80}
+                              height={80}
+                              style={{ objectFit: 'cover' }}
+                            />
+                            <div>
+                              <Text type="secondary">{dup.character_name}</Text>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+                  ))}
+                  {selectedDuplicates.length > 0 && (
+                    <div className="mt-2">
+                      <Button danger onClick={() => handleDeleteDuplicates(false)} className="mr-2">
+                        删除选中项 ({selectedDuplicates.length})
+                      </Button>
+                      <Button onClick={() => handleDeleteDuplicates(true)}>仅保留第一个</Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {organizationData.tag_suggestions.length > 0 && (
+                <div>
+                  <Text strong className="block mb-2">
+                    标签建议
+                  </Text>
+                  {organizationData.tag_suggestions.map(suggestion => (
+                    <Card key={suggestion.character_name} size="small" className="mb-2">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <Text strong>@{suggestion.character_name}</Text>
+                          <Text type="secondary" className="ml-2">
+                            ({suggestion.reason})
+                          </Text>
+                        </div>
+                        <Space>
+                          {suggestion.suggested_tags.map(tag => (
+                            <Tag
+                              key={tag}
+                              color="green"
+                              className="cursor-pointer"
+                              onClick={() =>
+                                handleApplyTagSuggestion(suggestion.character_name, [tag])
+                              }
+                            >
+                              + {tag}
+                            </Tag>
+                          ))}
+                        </Space>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+
+              {organizationData.duplicates.length === 0 &&
+                organizationData.tag_suggestions.length === 0 && (
+                  <div className="text-center py-8">
+                    <Text type="secondary">
+                      图库已经很整洁了！没有发现重复图片或需要标签建议的图片。
+                    </Text>
+                  </div>
+                )}
+
+              {actionLogs.length > 0 && (
+                <div className="mt-6">
+                  <Text strong className="block mb-2">
+                    操作历史
+                  </Text>
+                  {actionLogs
+                    .slice(-5)
+                    .reverse()
+                    .map(log => (
+                      <div key={log.id} className="flex justify-between items-center py-1">
+                        <Text type="secondary">
+                          {log.action_type === 'apply_tags' ? '应用标签' : '删除重复'} -{' '}
+                          {log.target}
+                        </Text>
+                        {!log.undone && (
+                          <Button size="small" onClick={() => handleUndoAction(log.id)}>
+                            撤销
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
+        </Spin>
       </Modal>
     </>
   );

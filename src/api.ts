@@ -467,6 +467,7 @@ export async function addHistory(history: {
   images: string[];
   characters: string[];
   status: string;
+  source_history_id?: string;
   created_at: string;
   updated_at: string;
 }): Promise<{
@@ -477,6 +478,7 @@ export async function addHistory(history: {
   images: string[];
   characters: string[];
   status: string;
+  source_history_id?: string;
   created_at: string;
   updated_at: string;
 }> {
@@ -496,6 +498,11 @@ export async function getHistory(
     startDate?: string;
     endDate?: string;
     character?: string;
+    widthMin?: number;
+    widthMax?: number;
+    heightMin?: number;
+    heightMax?: number;
+    quality?: string;
   }
 ): Promise<{
   total: number;
@@ -525,6 +532,11 @@ export async function getHistory(
       endDate: filter?.endDate || null,
       end_date: filter?.endDate || null,
       character: filter?.character || null,
+      widthMin: filter?.widthMin || null,
+      widthMax: filter?.widthMax || null,
+      heightMin: filter?.heightMin || null,
+      heightMax: filter?.heightMax || null,
+      quality: filter?.quality || null,
     });
   }
   const params = new URLSearchParams();
@@ -535,6 +547,11 @@ export async function getHistory(
   if (filter?.startDate) params.set('start_date', filter.startDate);
   if (filter?.endDate) params.set('end_date', filter.endDate);
   if (filter?.character) params.set('character', filter.character);
+  if (filter?.widthMin) params.set('width_min', String(filter.widthMin));
+  if (filter?.widthMax) params.set('width_max', String(filter.widthMax));
+  if (filter?.heightMin) params.set('height_min', String(filter.heightMin));
+  if (filter?.heightMax) params.set('height_max', String(filter.heightMax));
+  if (filter?.quality) params.set('quality', filter.quality);
   return fetchApi(`/api/history/list?${params.toString()}`);
 }
 
@@ -657,17 +674,22 @@ export async function batchAddTags(characterNames: string[], tags: string[]): Pr
   return fetchApi('/api/reference-images/batch-add-tags', { characterNames, tags });
 }
 
-// ==================== Prompt Template API (US-13) ====================
+// ==================== Prompt Template API (US-13, US-25) ====================
 
 export async function addPromptTemplate(template: {
   name: string;
   content: string;
   category: string;
+  group?: string;
+  is_favorite?: boolean;
 }): Promise<{
   id: string;
   name: string;
   content: string;
   category: string;
+  group: string;
+  is_favorite: boolean;
+  is_builtin: boolean;
   variables: string[];
   usage_count: number;
   created_at: string;
@@ -686,6 +708,9 @@ export async function getAllPromptTemplates(): Promise<
     name: string;
     content: string;
     category: string;
+    group: string;
+    is_favorite: boolean;
+    is_builtin: boolean;
     variables: string[];
     usage_count: number;
     created_at: string;
@@ -704,6 +729,9 @@ export async function getPromptTemplateById(id: string): Promise<{
   name: string;
   content: string;
   category: string;
+  group: string;
+  is_favorite: boolean;
+  is_builtin: boolean;
   variables: string[];
   usage_count: number;
   created_at: string;
@@ -728,6 +756,9 @@ export async function updatePromptTemplate(
   name: string;
   content: string;
   category: string;
+  group: string;
+  is_favorite: boolean;
+  is_builtin: boolean;
   variables: string[];
   usage_count: number;
   created_at: string;
@@ -746,6 +777,75 @@ export async function deletePromptTemplate(id: string): Promise<boolean> {
     return invoke('delete_prompt_template', { id });
   }
   return fetchApi('/api/prompt-templates/delete', { id });
+}
+
+export async function updatePromptTemplateFavorite(
+  id: string,
+  is_favorite: boolean
+): Promise<{
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  group: string;
+  is_favorite: boolean;
+  is_builtin: boolean;
+  variables: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('update_prompt_template_favorite', { id, is_favorite });
+  }
+  return fetchApi('/api/prompt-templates/update-favorite', { id, is_favorite });
+}
+
+export async function updatePromptTemplateGroup(
+  id: string,
+  group: string
+): Promise<{
+  id: string;
+  name: string;
+  content: string;
+  category: string;
+  group: string;
+  is_favorite: boolean;
+  is_builtin: boolean;
+  variables: string[];
+  usage_count: number;
+  created_at: string;
+  updated_at: string;
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('update_prompt_template_group', { id, group });
+  }
+  return fetchApi('/api/prompt-templates/update-group', { id, group });
+}
+
+export async function exportPromptTemplates(ids: string[]): Promise<string> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('export_prompt_templates', { ids });
+  }
+  return fetchApi('/api/prompt-templates/export', { ids });
+}
+
+export async function importPromptTemplates(
+  jsonData: string,
+  strategy: 'skip' | 'overwrite' | 'rename'
+): Promise<{
+  imported: number;
+  skipped: number;
+  errors: string[];
+}> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('import_prompt_templates', { jsonData, strategy });
+  }
+  return fetchApi('/api/prompt-templates/import', { jsonData, strategy });
 }
 
 export async function incrementTemplateUsage(id: string): Promise<boolean> {
@@ -804,6 +904,11 @@ export interface SavedFilter {
   start_date?: string;
   end_date?: string;
   character?: string;
+  width_min?: number;
+  width_max?: number;
+  height_min?: number;
+  height_max?: number;
+  quality?: string;
   created_at: string;
 }
 
@@ -833,4 +938,147 @@ export async function deleteSavedFilter(id: string): Promise<boolean> {
     return invoke('delete_saved_filter', { id });
   }
   return fetchApi('/api/saved-filters/delete', { id });
+}
+
+export interface ImageFeature {
+  character_name: string;
+  image_path: string;
+  hash: string;
+  width: number;
+  height: number;
+  file_size: number;
+}
+
+export interface DuplicateGroup {
+  representative: ImageFeature;
+  duplicates: ImageFeature[];
+  similarity: number;
+  suggested_action: string;
+}
+
+export interface TagSuggestion {
+  character_name: string;
+  suggested_tags: string[];
+  confidence: number;
+  reason: string;
+}
+
+export interface OrganizationSuggestion {
+  duplicates: DuplicateGroup[];
+  tag_suggestions: TagSuggestion[];
+  total_images: number;
+  duplicate_count: number;
+}
+
+export interface OrganizationActionRequest {
+  action_type: string;
+  target: string;
+  new_tags?: string[];
+  keep_representative?: boolean;
+}
+
+export interface OrganizationActionLog {
+  id: string;
+  action_type: string;
+  target: string;
+  original_value?: string;
+  new_value?: string;
+  timestamp: string;
+  undone: boolean;
+}
+
+export async function analyzeReferenceLibrary(): Promise<OrganizationSuggestion> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('analyze_reference_library');
+  }
+  return fetchApi('/api/organization/analyze');
+}
+
+export async function executeOrganizationAction(
+  action: OrganizationActionRequest
+): Promise<OrganizationActionLog> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('execute_organization_action', { action });
+  }
+  return fetchApi('/api/organization/execute', action);
+}
+
+export async function undoOrganizationAction(logId: string): Promise<OrganizationActionLog> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('undo_organization_action', { logId });
+  }
+  return fetchApi('/api/organization/undo', { logId });
+}
+
+export async function getOrganizationActionLog(): Promise<OrganizationActionLog[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_organization_action_log');
+  }
+  return fetchApi('/api/organization/log');
+}
+
+export async function deleteDuplicateImages(
+  characterNames: string[],
+  keepRepresentative: boolean
+): Promise<number> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_duplicate_images', { characterNames, keepRepresentative });
+  }
+  return fetchApi('/api/organization/delete-duplicates', { characterNames, keepRepresentative });
+}
+
+export interface ExportQuery {
+  start_date?: string;
+  end_date?: string;
+  model?: string;
+  prompt_keyword?: string;
+  character?: string;
+  selected_ids?: string[];
+}
+
+export interface ExportRecord {
+  id: string;
+  prompt: string;
+  model: string;
+  width: number;
+  height: number;
+  quality: string;
+  created_at: string;
+  image_filename?: string;
+}
+
+export interface ExportPackage {
+  name: string;
+  export_time: string;
+  record_count: number;
+  summary: {
+    total_records: number;
+    models_used: string[];
+    date_range?: [string, string];
+  };
+}
+
+export async function previewExportData(query: ExportQuery): Promise<ExportRecord[]> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('preview_export_data', { query });
+  }
+  return fetchApi('/api/export/preview', query);
+}
+
+export async function createExportPackage(
+  query: ExportQuery,
+  outputPath: string,
+  packageName?: string
+): Promise<ExportPackage> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('create_export_package', { query, outputPath, packageName });
+  }
+  return fetchApi('/api/export/create', { query, outputPath, packageName });
 }

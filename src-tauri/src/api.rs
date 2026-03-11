@@ -548,6 +548,15 @@ pub struct HistoryListQuery {
     #[serde(alias = "endDate")]
     end_date: Option<String>,
     character: Option<String>,
+    #[serde(alias = "widthMin")]
+    width_min: Option<u32>,
+    #[serde(alias = "widthMax")]
+    width_max: Option<u32>,
+    #[serde(alias = "heightMin")]
+    height_min: Option<u32>,
+    #[serde(alias = "heightMax")]
+    height_max: Option<u32>,
+    quality: Option<String>,
 }
 
 pub async fn api_get_history_handler(
@@ -559,6 +568,11 @@ pub async fn api_get_history_handler(
         start_date: query.start_date,
         end_date: query.end_date,
         character: query.character,
+        width_min: query.width_min,
+        width_max: query.width_max,
+        height_min: query.height_min,
+        height_max: query.height_max,
+        quality: query.quality,
     };
     
     match storage::get_history(query.page.unwrap_or(0), query.page_size.unwrap_or(20), Some(filter)) {
