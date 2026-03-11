@@ -329,6 +329,23 @@ fn save_settings(settings: storage::AppSettings) -> Result<storage::AppSettings,
     storage::save_settings(settings)
 }
 
+// ==================== Statistics Commands ====================
+
+#[tauri::command]
+fn get_generation_stats(days: u32) -> Result<storage::GenerationStats, String> {
+    storage::get_generation_stats(days)
+}
+
+#[tauri::command]
+fn get_api_stats(limit: u32) -> Result<storage::ApiStats, String> {
+    storage::get_api_stats(limit)
+}
+
+#[tauri::command]
+fn get_template_stats() -> Result<storage::TemplateStats, String> {
+    storage::get_template_stats()
+}
+
 #[tokio::main]
 pub async fn main() {
     if let Err(e) = Storage::init() {
@@ -483,6 +500,10 @@ pub async fn main() {
             // Settings CRUD
             get_settings,
             save_settings,
+            // Statistics
+            get_generation_stats,
+            get_api_stats,
+            get_template_stats,
             // Folder CRUD
             create_folder,
             rename_folder,

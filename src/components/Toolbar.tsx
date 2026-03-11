@@ -6,6 +6,7 @@ import {
   FileTextOutlined,
   RobotOutlined,
   SettingOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons';
 import { useTheme } from '../theme';
 
@@ -25,6 +26,7 @@ const toolbarItems: ToolbarItem[] = [
   { key: 'gallery', icon: <PictureOutlined />, label: '参考图库' },
   { key: 'history', icon: <HistoryOutlined />, label: '历史记录' },
   { key: 'templates', icon: <FileTextOutlined />, label: '模板' },
+  { key: 'stats', icon: <BarChartOutlined />, label: '统计' },
   { key: 'accounts', icon: <RobotOutlined />, label: '账号' },
   { key: 'settings', icon: <SettingOutlined />, label: '设置' },
 ];

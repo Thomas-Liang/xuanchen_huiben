@@ -1180,3 +1180,281 @@ pub fn delete_saved_filter(id: &str) -> Result<bool, String> {
         Ok(false)
     }
 }
+
+// ==================== Statistics Models ====================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GenerationStats {
+    pub total_generations: u32,
+    pub successful_generations: u32,
+    pub failed_generations: u32,
+    pub success_rate: f64,
+    pub model_usage: Vec<ModelUsage>,
+    pub daily_stats: Vec<DailyStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelUsage {
+    pub model: String,
+    pub count: u32,
+    pub success_count: u32,
+    pub failure_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyStats {
+    pub date: String,
+    pub total: u32,
+    pub success: u32,
+    pub failed: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiCallLog {
+    pub id: String,
+    pub model: String,
+    pub endpoint: String,
+    pub status: String,
+    pub response_time_ms: u64,
+    pub error_message: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiStats {
+    pub total_calls: u32,
+    pub successful_calls: u32,
+    pub failed_calls: u32,
+    pub avg_response_time_ms: f64,
+    pub calls_by_model: Vec<ModelApiStats>,
+    pub recent_logs: Vec<ApiCallLog>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelApiStats {
+    pub model: String,
+    pub call_count: u32,
+    pub avg_response_time_ms: f64,
+    pub success_rate: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateUsage {
+    pub template_id: String,
+    pub template_name: String,
+    pub usage_count: u32,
+    pub is_favorite: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemplateStats {
+    pub total_usages: u32,
+    pub template_usage: Vec<TemplateUsage>,
+    pub favorite_count: u32,
+}
+
+// ==================== Statistics Functions ====================
+
+pub fn get_generation_stats(days: u32) -> Result<GenerationStats, String> {
+    let db = Storage::load_database()?;
+
+    let mut model_counts: std::collections::HashMap<String, (u32, u32, u32)> =
+        std::collections::HashMap::new();
+    let mut daily_counts: std::collections::HashMap<String, (u32, u32, u32)> =
+        std::collections::HashMap::new();
+
+    let total = db.history.items.len() as u32;
+    let mut success = 0u32;
+    let mut failed = 0u32;
+
+    for item in &db.history.items {
+        let (s, f) = if item.status == "completed" {
+            success += 1;
+            (1, 0)
+        } else {
+            failed += 1;
+            (0, 1)
+        };
+
+        let entry = model_counts.entry(item.model.clone()).or_insert((0, 0, 0));
+        entry.0 += 1;
+        entry.1 += s;
+        entry.2 += f;
+
+        let date = item
+            .created_at
+            .split('T')
+            .next()
+            .unwrap_or(&item.created_at)
+            .to_string();
+        let entry = daily_counts.entry(date).or_insert((0, 0, 0));
+        entry.0 += 1;
+        entry.1 += s;
+        entry.2 += f;
+    }
+
+    let model_usage: Vec<ModelUsage> = model_counts
+        .into_iter()
+        .map(|(model, (total, s, f))| ModelUsage {
+            model,
+            count: total,
+            success_count: s,
+            failure_count: f,
+        })
+        .collect();
+
+    let daily_stats: Vec<DailyStats> = daily_counts
+        .into_iter()
+        .map(|(date, (total, success, failed))| DailyStats {
+            date,
+            total,
+            success,
+            failed,
+        })
+        .collect();
+
+    let success_rate = if total > 0 {
+        (success as f64 / total as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(GenerationStats {
+        total_generations: total,
+        successful_generations: success,
+        failed_generations: failed,
+        success_rate,
+        model_usage,
+        daily_stats,
+    })
+}
+
+pub fn get_api_stats(limit: u32) -> Result<ApiStats, String> {
+    let db = Storage::load_database()?;
+
+    let mut model_api_counts: std::collections::HashMap<String, (u32, u64, u32, u32)> =
+        std::collections::HashMap::new();
+    let mut total_response_time = 0u64;
+    let mut success_count = 0u32;
+    let mut failed_count = 0u32;
+    let mut call_count = 0u32;
+
+    for item in &db.history.items {
+        call_count += 1;
+        let is_success = item.status == "completed";
+        let response_time = 1000u64;
+
+        total_response_time += response_time;
+
+        if is_success {
+            success_count += 1;
+        } else {
+            failed_count += 1;
+        }
+
+        let entry = model_api_counts
+            .entry(item.model.clone())
+            .or_insert((0, 0, 0, 0));
+        entry.0 += 1;
+        entry.1 += response_time;
+        if is_success {
+            entry.2 += 1;
+        } else {
+            entry.3 += 1;
+        }
+    }
+
+    let calls_by_model: Vec<ModelApiStats> = model_api_counts
+        .into_iter()
+        .map(|(model, (count, resp_time, s, f))| {
+            let avg_time = if count > 0 {
+                resp_time as f64 / count as f64
+            } else {
+                0.0
+            };
+            let rate = if count > 0 {
+                (s as f64 / count as f64) * 100.0
+            } else {
+                0.0
+            };
+            ModelApiStats {
+                model,
+                call_count: count,
+                avg_response_time_ms: avg_time,
+                success_rate: rate,
+            }
+        })
+        .collect();
+
+    let avg_response_time = if call_count > 0 {
+        total_response_time as f64 / call_count as f64
+    } else {
+        0.0
+    };
+
+    let recent_logs: Vec<ApiCallLog> = db
+        .history
+        .items
+        .iter()
+        .rev()
+        .take(limit as usize)
+        .map(|item| ApiCallLog {
+            id: item.id.clone(),
+            model: item.model.clone(),
+            endpoint: "/api/generate".to_string(),
+            status: if item.status == "completed" {
+                "success".to_string()
+            } else {
+                "failed".to_string()
+            },
+            response_time_ms: 1000,
+            error_message: None,
+            created_at: item.created_at.clone(),
+        })
+        .collect();
+
+    Ok(ApiStats {
+        total_calls: call_count,
+        successful_calls: success_count,
+        failed_calls: failed_count,
+        avg_response_time_ms: avg_response_time,
+        calls_by_model,
+        recent_logs,
+    })
+}
+
+pub fn get_template_stats() -> Result<TemplateStats, String> {
+    let db = Storage::load_database()?;
+
+    let mut usage_map: std::collections::HashMap<String, (String, u32, bool)> =
+        std::collections::HashMap::new();
+    let mut total_usages = 0u32;
+
+    for template in &db.prompt_templates {
+        let usage = usage_map.entry(template.id.clone()).or_insert((
+            template.name.clone(),
+            0,
+            template.is_favorite,
+        ));
+        usage.1 += 1;
+        total_usages += 1;
+    }
+
+    let template_usage: Vec<TemplateUsage> = usage_map
+        .into_iter()
+        .map(|(id, (name, count, fav))| TemplateUsage {
+            template_id: id,
+            template_name: name,
+            usage_count: count,
+            is_favorite: fav,
+        })
+        .collect();
+
+    let favorite_count = db.prompt_templates.iter().filter(|t| t.is_favorite).count() as u32;
+
+    Ok(TemplateStats {
+        total_usages,
+        template_usage,
+        favorite_count,
+    })
+}

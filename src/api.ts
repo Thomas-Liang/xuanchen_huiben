@@ -1082,3 +1082,91 @@ export async function createExportPackage(
   }
   return fetchApi('/api/export/create', { query, outputPath, packageName });
 }
+
+// ==================== Statistics APIs ====================
+
+export interface ModelUsage {
+  model: string;
+  count: number;
+  success_count: number;
+  failure_count: number;
+}
+
+export interface DailyStats {
+  date: string;
+  total: number;
+  success: number;
+  failed: number;
+}
+
+export interface GenerationStats {
+  total_generations: number;
+  successful_generations: number;
+  failed_generations: number;
+  success_rate: number;
+  model_usage: ModelUsage[];
+  daily_stats: DailyStats[];
+}
+
+export interface ApiCallLog {
+  id: string;
+  model: string;
+  endpoint: string;
+  status: string;
+  response_time_ms: number;
+  error_message?: string;
+  created_at: string;
+}
+
+export interface ModelApiStats {
+  model: string;
+  call_count: number;
+  avg_response_time_ms: number;
+  success_rate: number;
+}
+
+export interface ApiStats {
+  total_calls: number;
+  successful_calls: number;
+  failed_calls: number;
+  avg_response_time_ms: number;
+  calls_by_model: ModelApiStats[];
+  recent_logs: ApiCallLog[];
+}
+
+export interface TemplateUsage {
+  template_id: string;
+  template_name: string;
+  usage_count: number;
+  is_favorite: boolean;
+}
+
+export interface TemplateStats {
+  total_usages: number;
+  template_usage: TemplateUsage[];
+  favorite_count: number;
+}
+
+export async function getGenerationStats(days: number = 30): Promise<GenerationStats> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_generation_stats', { days });
+  }
+  return fetchApi(`/api/stats/generation?days=${days}`);
+}
+
+export async function getApiStats(limit: number = 20): Promise<ApiStats> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_api_stats', { limit });
+  }
+  return fetchApi(`/api/stats/api?limit=${limit}`);
+}
+
+export async function getTemplateStats(): Promise<TemplateStats> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_template_stats');
+  }
+  return fetchApi('/api/stats/template');
+}
