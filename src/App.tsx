@@ -73,6 +73,7 @@ import { HistoryList } from './components/history';
 import { ReferenceLibrary } from './components/library';
 import PromptTemplateModal from './components/templates';
 import { StatsPage } from './components/stats';
+import { ConfigPanel } from './components/config';
 import dayjs from 'dayjs';
 import './App.css';
 
@@ -2845,91 +2846,15 @@ function MainApp() {
         </div>
       </Modal>
 
-      <Modal
-        title="API配置"
-        open={configModalVisible}
-        onCancel={() => setConfigModalVisible(false)}
-        onOk={handleSaveConfig}
-        okText="保存"
-      >
-        <div style={{ padding: '16px 0' }}>
-          <Divider>Seeddream API</Divider>
-          <div style={{ marginBottom: 16 }}>
-            <Text strong>Base URL:</Text>
-            <Input
-              value={apiConfig.seedream.baseUrl}
-              onChange={e =>
-                setApiConfig({
-                  ...apiConfig,
-                  seedream: { ...apiConfig.seedream, baseUrl: e.target.value },
-                })
-              }
-              placeholder="https://api.zhongzhuan.chat"
-              style={{ marginTop: 4 }}
-            />
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <Text strong>API Key:</Text>
-            <Input.Password
-              value={apiConfig.seedream.apiKey}
-              onChange={e =>
-                setApiConfig({
-                  ...apiConfig,
-                  seedream: { ...apiConfig.seedream, apiKey: e.target.value },
-                })
-              }
-              placeholder="请输入API Key"
-              style={{ marginTop: 4 }}
-            />
-            <Button
-              type="link"
-              onClick={() => handleTestApi('seedream')}
-              loading={testingApi === 'seedream'}
-              style={{ marginTop: 4, padding: 0 }}
-            >
-              测试连接
-            </Button>
-          </div>
-
-          <Divider>Banana 2 API</Divider>
-          <div style={{ marginBottom: 16 }}>
-            <Text strong>Base URL:</Text>
-            <Input
-              value={apiConfig.bananaPro.baseUrl}
-              onChange={e =>
-                setApiConfig({
-                  ...apiConfig,
-                  bananaPro: { ...apiConfig.bananaPro, baseUrl: e.target.value },
-                })
-              }
-              placeholder="https://api.bananaprostudio.com"
-              style={{ marginTop: 4 }}
-            />
-          </div>
-          <div>
-            <Text strong>API Key:</Text>
-            <Input.Password
-              value={apiConfig.bananaPro.apiKey}
-              onChange={e =>
-                setApiConfig({
-                  ...apiConfig,
-                  bananaPro: { ...apiConfig.bananaPro, apiKey: e.target.value },
-                })
-              }
-              placeholder="请输入API Key"
-              style={{ marginTop: 4 }}
-            />
-            <Button
-              type="link"
-              onClick={() => handleTestApi('banana_pro')}
-              loading={testingApi === 'banana_pro'}
-              style={{ marginTop: 4, padding: 0 }}
-            >
-              测试连接
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      <ConfigPanel
+        visible={configModalVisible}
+        onClose={() => setConfigModalVisible(false)}
+        apiConfig={apiConfig}
+        setApiConfig={setApiConfig}
+        onSave={handleSaveConfig}
+        onTestApi={handleTestApi}
+        testingApi={testingApi}
+      />
 
       <Modal
         title="使用说明"
