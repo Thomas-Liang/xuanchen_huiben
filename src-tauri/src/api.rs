@@ -14,6 +14,7 @@ use crate::commands::prompt_parser::parse_prompt_internal;
 use crate::commands::prompt_parser::ParsedPrompt;
 use crate::commands::prompt_parser::{batch_split_prompt, BatchSplitResult};
 use crate::commands::image_generator::GenerationConfig;
+use crate::commands::share::{ShareInput, ShareData};
 use crate::storage::{self, GenerationHistory, HistoryFilter};
 
 
@@ -625,6 +626,67 @@ pub async fn api_clear_history_handler() -> Result<impl axum::response::IntoResp
     }
 }
 
+use crate::commands::share;
+
+#[derive(Debug, Deserialize)]
+pub struct ShareQuery {
+    id: String,
+}
+
+pub async fn api_create_share(
+    Json(body): Json<ShareInput>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match share::create_share(body) {
+        Ok(record) => Ok(axum::Json(record)),
+        Err(e) => {
+            eprintln!("api_create_share error: {}", e);
+            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+pub async fn api_get_share(
+    Json(body): Json<ShareQuery>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match share::get_share(body.id) {
+        Ok(record) => Ok(axum::Json(record)),
+        Err(e) => {
+            eprintln!("api_get_share error: {}", e);
+            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+pub async fn api_delete_share(
+    Json(body): Json<ShareQuery>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match share::delete_share(body.id) {
+        Ok(result) => Ok(axum::Json(result)),
+        Err(e) => {
+            eprintln!("api_delete_share error: {}", e);
+            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateHtmlQuery {
+    data: ShareData,
+    password: Option<String>,
+}
+
+pub async fn api_generate_share_html(
+    Json(body): Json<GenerateHtmlQuery>
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    match share::generate_share_html(body.data, body.password) {
+        Ok(html) => Ok(axum::Json(html)),
+        Err(e) => {
+            eprintln!("api_generate_share_html error: {}", e);
+            Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
 pub fn create_api_router() -> Router {
 
     let cors = CorsLayer::new()
@@ -661,6 +723,10 @@ pub fn create_api_router() -> Router {
         .route("/api/history/add", post(api_add_history_handler))
         .route("/api/history/delete", post(api_delete_history_handler))
         .route("/api/history/clear", post(api_clear_history_handler))
+        .route("/api/share/create", post(api_create_share))
+        .route("/api/share/get", post(api_get_share))
+        .route("/api/share/delete", post(api_delete_share))
+        .route("/api/share/generate-html", post(api_generate_share_html))
 
         .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         .layer(cors)

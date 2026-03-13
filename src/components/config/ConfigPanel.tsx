@@ -1,5 +1,23 @@
-import { Button, Modal, Input, Typography, Space, Tag, Alert, Card, Row, Col } from 'antd';
-import { InfoCircleOutlined, CheckCircleOutlined, ApiOutlined } from '@ant-design/icons';
+import {
+  Button,
+  Modal,
+  Input,
+  Typography,
+  Space,
+  Tag,
+  Alert,
+  Card,
+  Row,
+  Col,
+  Switch,
+  InputNumber,
+} from 'antd';
+import {
+  InfoCircleOutlined,
+  CheckCircleOutlined,
+  ApiOutlined,
+  LinkOutlined,
+} from '@ant-design/icons';
 import type { APIConfig } from '../../types';
 
 const { Text } = Typography;
@@ -186,6 +204,97 @@ export function ConfigPanel({
           showIcon
           style={{ marginTop: 8 }}
         />
+
+        <Card
+          size="small"
+          title={
+            <Space>
+              <LinkOutlined />
+              <span>Webhook 回调</span>
+              <Tag color={apiConfig.webhook?.enabled ? 'success' : 'default'}>
+                {apiConfig.webhook?.enabled ? '已启用' : '已禁用'}
+              </Tag>
+            </Space>
+          }
+          style={{ marginTop: 16 }}
+        >
+          <Row gutter={12}>
+            <Col span={24}>
+              <Space style={{ marginBottom: 12 }}>
+                <Text strong style={{ fontSize: 12 }}>
+                  启用 Webhook
+                </Text>
+                <Switch
+                  checked={apiConfig.webhook?.enabled || false}
+                  onChange={checked =>
+                    setApiConfig({
+                      ...apiConfig,
+                      webhook: { ...apiConfig.webhook, enabled: checked },
+                    })
+                  }
+                  size="small"
+                />
+              </Space>
+            </Col>
+            <Col span={24}>
+              <Text strong style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>
+                回调 URL
+              </Text>
+              <Input
+                value={apiConfig.webhook?.url || ''}
+                onChange={e =>
+                  setApiConfig({
+                    ...apiConfig,
+                    webhook: { ...apiConfig.webhook, url: e.target.value },
+                  })
+                }
+                placeholder="https://your-webhook-url.com/callback"
+                disabled={!apiConfig.webhook?.enabled}
+              />
+            </Col>
+            <Col span={24} style={{ marginTop: 12 }}>
+              <Text strong style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>
+                密钥 (可选)
+              </Text>
+              <Input.Password
+                value={apiConfig.webhook?.secret || ''}
+                onChange={e =>
+                  setApiConfig({
+                    ...apiConfig,
+                    webhook: { ...apiConfig.webhook, secret: e.target.value },
+                  })
+                }
+                placeholder="用于生成签名验证"
+                disabled={!apiConfig.webhook?.enabled}
+              />
+            </Col>
+            <Col span={12} style={{ marginTop: 12 }}>
+              <Text strong style={{ display: 'block', marginBottom: 4, fontSize: 12 }}>
+                重试次数
+              </Text>
+              <InputNumber
+                min={0}
+                max={10}
+                value={apiConfig.webhook?.retryCount || 3}
+                onChange={value =>
+                  setApiConfig({
+                    ...apiConfig,
+                    webhook: { ...apiConfig.webhook, retryCount: value || 3 },
+                  })
+                }
+                disabled={!apiConfig.webhook?.enabled}
+                style={{ width: '100%' }}
+              />
+            </Col>
+          </Row>
+          <Alert
+            message="生成图片完成后会自动 POST 回调到指定 URL，支持签名验证和失败重试"
+            type="info"
+            showIcon
+            icon={<InfoCircleOutlined />}
+            style={{ marginTop: 12 }}
+          />
+        </Card>
       </div>
     </Modal>
   );

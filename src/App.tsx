@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { App, theme } from 'antd';
 import '@tauri-apps/api/core';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import {
   ConfigProvider,
   Layout,
@@ -25,11 +26,11 @@ import {
   Col,
   Divider,
   Alert,
-  Steps,
   Checkbox,
   Dropdown,
   Popconfirm,
   Tooltip,
+  Timeline,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -55,7 +56,9 @@ import {
   SunOutlined,
   MoonOutlined,
   DesktopOutlined,
+  ShareAltOutlined,
 } from '@ant-design/icons';
+import { ShareModal } from './components/result/ShareModal';
 import type {
   ParsedPrompt,
   CharacterBinding,
@@ -182,6 +185,8 @@ function MainApp() {
   const [responseFormat, setResponseFormat] = useState<'url' | 'b64_json'>('url');
   const [watermark, setWatermark] = useState<string>('false');
   const [generationResult, setGenerationResult] = useState<ImageGenerationResult | null>(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [selectedShareImage, setSelectedShareImage] = useState<string | null>(null);
   const [configModalVisible, setConfigModalVisible] = useState(false);
   const [helpModalVisible, setHelpModalVisible] = useState(false);
   const [referenceModalVisible, setReferenceModalVisible] = useState(false);
@@ -200,6 +205,7 @@ function MainApp() {
   const [apiConfig, setApiConfig] = useState<APIConfig>({
     seedream: { baseUrl: '', apiKey: '' },
     bananaPro: { baseUrl: '', apiKey: '' },
+    webhook: { enabled: false, url: '', secret: '', retryCount: 3 },
   });
   const [testingApi, setTestingApi] = useState<'seedream' | 'banana_pro' | null>(null);
 
@@ -400,6 +406,7 @@ function MainApp() {
       setApiConfig({
         seedream: { baseUrl: 'https://eggfans.com', apiKey: '' },
         bananaPro: { baseUrl: 'https://api.zhongzhuan.chat', apiKey: '' },
+        webhook: { enabled: false, url: '', secret: '', retryCount: 3 },
       });
     }
   };
@@ -778,6 +785,51 @@ function MainApp() {
               updated_at: new Date().toISOString(),
             });
             void loadDashboardStats();
+
+            try {
+              const enabled = await invoke<boolean>('is_notification_enabled');
+              if (enabled) {
+                try {
+                  const { isPermissionGranted, requestPermission } =
+                    await import('@tauri-apps/plugin-notification');
+                  let permissionGranted = await isPermissionGranted();
+                  if (!permissionGranted) {
+                    const permission = await requestPermission();
+                    permissionGranted = permission === 'granted';
+                  }
+                  if (permissionGranted) {
+                    if (result.success) {
+                      await invoke('send_notification', {
+                        title: '图片生成完成',
+                        body: `成功生成 ${result.images?.length || 0} 张图片`,
+                      });
+                    } else {
+                      await invoke('send_notification', {
+                        title: '图片生成失败',
+                        body: result.error || '未知错误',
+                      });
+                    }
+                  }
+                } catch (e) {
+                  console.error('[发送通知失败]:', e);
+                }
+
+                try {
+                  const { triggerWebhook } = await import('./api');
+                  await triggerWebhook(
+                    `gen_${Date.now()}`,
+                    result.success ? 'success' : 'failed',
+                    result.images || [],
+                    params.prompt,
+                    params.model
+                  );
+                } catch (e) {
+                  console.error('[发送Webhook失败]:', e);
+                }
+              }
+            } catch (e) {
+              console.error('[检查通知设置失败]:', e);
+            }
           } catch (e) {
             console.error('[保存历史记录失败]:', e);
           }
@@ -2582,23 +2634,40 @@ function MainApp() {
 
                                           {generationResult.success ? (
                                             <Row gutter={16}>
-                                              {generationResult.images.map((img, idx) => (
-                                                <Col key={`gen-img-${idx}`} span={12}>
-                                                  <Image
-                                                    src={img}
-                                                    alt={`生成图片 ${idx + 1}`}
-                                                    style={{ width: '100%', borderRadius: 8 }}
-                                                  />
-                                                  <Button
-                                                    type="link"
-                                                    icon={<DownloadOutlined />}
-                                                    onClick={() => handleSaveImage(img)}
-                                                    style={{ marginTop: 8 }}
-                                                  >
-                                                    保存到本地
-                                                  </Button>
-                                                </Col>
-                                              ))}
+                                              {generationResult.images.map((img, idx) => {
+                                                const src = img.startsWith('data:')
+                                                  ? img
+                                                  : convertFileSrc(img);
+                                                console.log('Displaying image:', img, '->', src);
+                                                return (
+                                                  <Col key={`gen-img-${idx}`} span={12}>
+                                                    <Image
+                                                      src={src}
+                                                      alt={`生成图片 ${idx + 1}`}
+                                                      style={{ width: '100%', borderRadius: 8 }}
+                                                    />
+                                                    <Space style={{ marginTop: 8 }}>
+                                                      <Button
+                                                        type="link"
+                                                        icon={<DownloadOutlined />}
+                                                        onClick={() => handleSaveImage(img)}
+                                                      >
+                                                        保存
+                                                      </Button>
+                                                      <Button
+                                                        type="link"
+                                                        icon={<ShareAltOutlined />}
+                                                        onClick={() => {
+                                                          setSelectedShareImage(img);
+                                                          setShareModalVisible(true);
+                                                        }}
+                                                      >
+                                                        分享
+                                                      </Button>
+                                                    </Space>
+                                                  </Col>
+                                                );
+                                              })}
                                             </Row>
                                           ) : (
                                             <Alert
@@ -2865,312 +2934,296 @@ function MainApp() {
             知道了
           </Button>,
         ]}
-        width={600}
+        width={800}
       >
         <div style={{ padding: '8px 0' }}>
-          <Alert
-            message="🌓 主题切换"
-            description={
-              <div style={{ color: '#666' }}>
-                <p>
-                  点击界面右上角的
-                  <Text strong style={{ color: '#6366f1' }}>
-                    主题切换
-                  </Text>
-                  按钮（太阳/月亮图标）可以切换主题：
-                </p>
-                <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                  <li>
-                    <Text style={{ color: '#10b981' }}>亮色主题</Text> - 浅色背景，适合白天使用
-                  </li>
-                  <li>
-                    <Text style={{ color: '#8b5cf6' }}>暗色主题</Text> - 深色背景，减少眼睛疲劳
-                  </li>
-                  <li>
-                    <Text style={{ color: '#f59e0b' }}>跟随系统</Text> - 自动跟随操作系统的主题设置
-                  </li>
-                </ul>
-                <p>主题设置会自动保存，下次打开应用时保持上次的选择。</p>
-              </div>
-            }
-            style={{ marginBottom: 16 }}
-          />
-          <Steps
-            current={0}
-            direction="vertical"
+          <Timeline
             items={[
               {
-                title: '第一步：召唤出窗口',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>
-                      如果看不见窗口，按{' '}
-                      <Text strong style={{ color: '#6366f1' }}>
-                        Ctrl + Shift + P
-                      </Text>{' '}
-                      或者点击屏幕右下角的托盘图标（小机器人图标）
-                    </p>
-                  </div>
+                color: 'purple',
+                children: (
+                  <Card
+                    size="small"
+                    title="🌓 主题切换"
+                    variant="borderless"
+                    style={{ background: 'rgba(99,102,241,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>
+                        点击界面右上角的
+                        <Text strong style={{ color: '#6366f1' }}>
+                          主题切换
+                        </Text>
+                        按钮（太阳/月亮图标）可以切换主题
+                      </p>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>
+                          <Text style={{ color: '#10b981' }}>亮色主题</Text> - 浅色背景
+                        </li>
+                        <li>
+                          <Text style={{ color: '#8b5cf6' }}>暗色主题</Text> - 深色背景
+                        </li>
+                        <li>
+                          <Text style={{ color: '#f59e0b' }}>跟随系统</Text> - 自动跟随系统
+                        </li>
+                      </ul>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第二步：输入提示词',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>在输入框中描述你想要生成的画面</p>
-                    <p>
-                      <Text strong style={{ color: '#8b5cf6' }}>
-                        绑定角色：
-                      </Text>{' '}
-                      在角色名字前加{' '}
-                      <Text code style={{ color: '#ef4444' }}>
-                        @
-                      </Text>{' '}
-                      符号，例如：
-                      <br />
-                      <Text code mark>
-                        在森林里@小明 正在跑步
-                      </Text>
-                    </p>
-                    <p>
-                      <Text strong style={{ color: '#10b981' }}>
-                        提示词历史：
-                      </Text>{' '}
-                      点击<Text style={{ color: '#6366f1' }}>「开始解析」</Text>或
-                      <Text style={{ color: '#6366f1' }}>「拆分场景」</Text>后会自动保存提示词，
-                      可通过输入框上方的<Text style={{ color: '#6366f1' }}>「提示词历史」</Text>
-                      下拉一键复用；支持删首条、清空与搜索。
-                    </p>
-                    <p>
-                      <Text strong style={{ color: '#8b5cf6' }}>
-                        长度提示：
-                      </Text>{' '}
-                      输入标题右侧会显示
-                      <Text style={{ color: '#6366f1' }}>「（当前长度 / 最大长度）」</Text>
-                      ，并按占比自动变色（紫/橙/红）；悬浮可查看说明。
-                    </p>
-                  </div>
+                color: 'violet',
+                children: (
+                  <Card
+                    size="small"
+                    title="📝 第一步：输入提示词"
+                    variant="borderless"
+                    style={{ background: 'rgba(139,92,246,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>在输入框中描述你想要生成的画面</p>
+                      <p>
+                        <Text strong style={{ color: '#8b5cf6' }}>
+                          绑定角色：
+                        </Text>{' '}
+                        在角色名字前加
+                        <Text code style={{ color: '#ef4444' }}>
+                          @
+                        </Text>
+                        符号
+                        <br />
+                        <Text code mark>
+                          在森林里@小明 正在跑步
+                        </Text>
+                      </p>
+                      <p>
+                        <Text strong style={{ color: '#10b981' }}>
+                          提示词历史：
+                        </Text>
+                        自动保存，可从输入框上方下拉复用
+                      </p>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第三步：解析提示词',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>
+                color: 'green',
+                children: (
+                  <Card
+                    size="small"
+                    title="🔍 第二步：解析提示词"
+                    variant="borderless"
+                    style={{ background: 'rgba(16,185,129,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
                       点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「开始解析」</Text>
                       按钮，系统会识别出角色和场景
-                    </p>
-                  </div>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第四步：绑定参考图（可选）',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>
-                      如果提示词中有 <Text style={{ color: '#ef4444' }}>@角色名</Text>
-                      ，系统会提示你上传该角色的图片作为参考
-                    </p>
-                    <p>
-                      点击<Text style={{ color: '#6366f1' }}>「绑定参考图」</Text>→ 选择或上传图片 →
-                      选择类型（<Text style={{ color: '#10b981' }}>人物</Text>/
-                      <Text style={{ color: '#10b981' }}>人脸</Text>/
-                      <Text style={{ color: '#10b981' }}>全身</Text>/
-                      <Text style={{ color: '#10b981' }}>场景</Text>）→ 点击
-                      <Text style={{ color: '#6366f1' }}>「确认绑定」</Text>
-                    </p>
-                    <p>
-                      <Text strong style={{ color: '#f59e0b' }}>
-                        从图库选择：
-                      </Text>{' '}
-                      点击<Text style={{ color: '#6366f1' }}>「从图库选择」</Text>
-                      可以挑选之前已保存的参考图
-                    </p>
-                  </div>
+                color: 'orange',
+                children: (
+                  <Card
+                    size="small"
+                    title="📷 第三步：绑定参考图（可选）"
+                    variant="borderless"
+                    style={{ background: 'rgba(245,158,11,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>
+                        如果有<Text style={{ color: '#ef4444' }}>@角色名</Text>
+                        ，系统会提示上传参考图
+                      </p>
+                      <p>
+                        点击<Text style={{ color: '#6366f1' }}>「绑定参考图」</Text>→ 选择图片 →
+                        选择类型 → 确认
+                      </p>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第五步：管理参考图',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>
-                      点击导航栏<Text style={{ color: '#6366f1' }}>「参考图库」</Text>按钮可以：
-                    </p>
-                    <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                      <li>按树形目录查看图片：全部图片 / 未分类(根目录) / 自定义文件夹</li>
-                      <li>创建、重命名、删除文件夹（支持新建子文件夹）</li>
-                      <li>上传图片时可直接指定保存目录</li>
-                      <li>将图片移动到任意文件夹进行归档</li>
-                      <li>点击图片可预览完整大图</li>
-                      <li>
-                        按类型筛选（<Text style={{ color: '#10b981' }}>人物</Text>/
-                        <Text style={{ color: '#10b981' }}>人脸</Text>/
-                        <Text style={{ color: '#10b981' }}>全身</Text>/
-                        <Text style={{ color: '#10b981' }}>场景</Text>）
-                      </li>
-                      <li>搜索参考图（按角色名或标签）</li>
-                      <li>按标签筛选</li>
-                      <li>为参考图添加/移除标签</li>
-                      <li>删除不需要的参考图</li>
-                      <li>
-                        <Text strong style={{ color: '#ec4899' }}>
-                          批量操作：
-                        </Text>{' '}
-                        点击"多选模式"按钮进入批量操作模式，可批量移动、批量删除、批量添加标签
-                      </li>
-                      <li>
-                        <Text strong style={{ color: '#f59e0b' }}>
-                          提示词模板：
-                        </Text>{' '}
-                        点击"模板库"按钮可创建、使用提示词模板，支持变量（如 {'{角色}'}）和次数统计
-                      </li>
-                    </ul>
-                    <p>
-                      <Text strong style={{ color: '#ef4444' }}>
-                        重名提示：
-                      </Text>{' '}
-                      同级目录下创建或重命名为相同名称会报错，请更换名称。
-                    </p>
-                    <p>
-                      <Text strong style={{ color: '#f59e0b' }}>
-                        预设标签：
-                      </Text>{' '}
-                      可爱、帅气、美丽、成熟、青春、活泼、内向、冷酷，也可输入自定义标签
-                    </p>
-                  </div>
+                color: 'magenta',
+                children: (
+                  <Card
+                    size="small"
+                    title="🖼️ 第四步：管理参考图"
+                    variant="borderless"
+                    style={{ background: 'rgba(236,72,153,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>
+                        点击导航栏<Text style={{ color: '#6366f1' }}>「参考图库」</Text>可以：
+                      </p>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>树形目录查看：全部/未分类/自定义文件夹</li>
+                        <li>创建/重命名/删除文件夹</li>
+                        <li>上传/移动/预览/删除图片</li>
+                        <li>按类型筛选、按标签筛选</li>
+                        <li>批量操作、提示词模板</li>
+                      </ul>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第六步：生成图片',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>
-                      选择模型（<Text style={{ color: '#10b981' }}>Seedream</Text> 或{' '}
-                      <Text style={{ color: '#10b981' }}>Banana 2</Text>）和图片参数
-                    </p>
-                    <p>
-                      点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「开始生成」</Text>
-                      等待图片生成完成
-                    </p>
-                    <p>
-                      生成完成后可以点击<Text style={{ color: '#6366f1' }}>「保存到本地」</Text>
-                    </p>
-                  </div>
+                color: 'blue',
+                children: (
+                  <Card
+                    size="small"
+                    title="🎨 第五步：生成图片"
+                    variant="borderless"
+                    style={{ background: 'rgba(99,102,241,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>
+                        选择模型和参数，点击
+                        <Text style={{ color: '#6366f1', fontWeight: 500 }}>「开始生成」</Text>
+                      </p>
+                      <p>
+                        生成完成后可点击<Text style={{ color: '#6366f1' }}>「保存到本地」</Text>
+                      </p>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第七步：批量处理（可选）',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>
-                      开启<Text style={{ color: '#6366f1', fontWeight: 500 }}>「批量模式」</Text>
-                      可一次性生成多张图片：
-                    </p>
-                    <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                      <li>开启批量模式开关</li>
-                      <li>配置分隔符或开启自动识别</li>
-                      <li>
-                        输入多个场景的提示词（用 <Text code>|</Text> 分隔）
-                      </li>
-                      <li>
-                        点击<Text style={{ color: '#6366f1' }}>「拆分场景」</Text>拆分提示词
-                      </li>
-                      <li>为每个场景绑定角色参考图（可选）</li>
-                      <li>
-                        点击<Text style={{ color: '#6366f1' }}>「设置」</Text>调整模型和并发数
-                      </li>
-                      <li>
-                        点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「全部生图」</Text>
-                        并发生成图片
-                      </li>
-                    </ul>
-                    <p>
-                      <Text strong style={{ color: '#8b5cf6' }}>
-                        全局绑定：
-                      </Text>{' '}
-                      批量模式下可切换<Text style={{ color: '#8b5cf6' }}>「全局绑定」</Text>
-                      模式，一次绑定所有场景共享
-                    </p>
-                  </div>
+                color: 'purple',
+                children: (
+                  <Card
+                    size="small"
+                    title="📚 第六步：批量处理（可选）"
+                    variant="borderless"
+                    style={{ background: 'rgba(139,92,246,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>
+                        开启<Text style={{ color: '#6366f1', fontWeight: 500 }}>「批量模式」</Text>
+                        可一次性生成多张：
+                      </p>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>配置分隔符或开启自动识别</li>
+                        <li>
+                          输入多个场景（用<Text code>|</Text>分隔）
+                        </li>
+                        <li>拆分后为每个场景绑定参考图</li>
+                        <li>
+                          点击<Text style={{ color: '#6366f1' }}>「全部生图」</Text>并发生成
+                        </li>
+                      </ul>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第八步：单图模式生成',
-                description: (
-                  <div style={{ color: '#666', marginBottom: 8 }}>
-                    <p>单图模式下也可批量生成所有分段图片：</p>
-                    <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                      <li>
-                        输入提示词并点击<Text style={{ color: '#6366f1' }}>「开始解析」</Text>
-                      </li>
-                      <li>
-                        解析结果以<Text style={{ color: '#10b981' }}>折叠面板</Text>形式展示
-                      </li>
-                      <li>
-                        点击<Text style={{ color: '#6366f1' }}>「生成设置」</Text>调整参数
-                      </li>
-                      <li>
-                        点击<Text style={{ color: '#6366f1', fontWeight: 500 }}>「全部生图」</Text>
-                        批量生成所有分段
-                      </li>
-                    </ul>
-                    <p>
-                      <Text strong style={{ color: '#f59e0b' }}>
-                        模式切换：
-                      </Text>{' '}
-                      切换模式时会<Text style={{ color: '#ef4444' }}>自动清除</Text>之前的结果
-                    </p>
-                  </div>
+                color: 'green',
+                children: (
+                  <Card
+                    size="small"
+                    title="📤 第七步：一键分享（V3-32）"
+                    variant="borderless"
+                    style={{ background: 'rgba(34,197,94,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>生成图片后可一键分享：</p>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>点击"分享全部"或单图"分享"按钮</li>
+                        <li>
+                          <Text strong>链接分享</Text>：生成分享链接和二维码，支持局域网访问
+                        </li>
+                        <li>
+                          <Text strong>本地 HTML</Text>：下载独立 HTML 文件，可离线查看
+                        </li>
+                        <li>可设置有效期（1天/7天/永久）和访问密码</li>
+                      </ul>
+                    </div>
+                  </Card>
                 ),
               },
               {
-                title: '第九步：隐藏窗口',
-                description: (
-                  <div style={{ color: '#666' }}>
-                    <p>
-                      使用完毕后，按 <Text strong>Ctrl + Shift + P</Text>{' '}
-                      可以隐藏窗口（程序会在后台托盘运行）
-                    </p>
-                    <p>或者点击窗口右上角×关闭按钮，窗口会最小化到托盘</p>
-                  </div>
+                color: 'orange',
+                children: (
+                  <Card
+                    size="small"
+                    title="🔔 第八步：桌面通知（V3-28）"
+                    variant="borderless"
+                    style={{ background: 'rgba(251,146,60,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>生成图片完成后自动发送系统通知：</p>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>生成成功：显示"图片生成完成 - 成功生成 X 张图片"</li>
+                        <li>生成失败：显示"图片生成失败 - 错误原因"</li>
+                        <li>通知功能可在设置中开关（默认开启）</li>
+                      </ul>
+                    </div>
+                  </Card>
+                ),
+              },
+              {
+                color: 'cyan',
+                children: (
+                  <Card
+                    size="small"
+                    title="🔌 Webhooks 回调（V3-07）"
+                    variant="borderless"
+                    style={{ background: 'rgba(20,184,166,0.06)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <p>在设置中配置 Webhook：</p>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>启用 Webhook 开关</li>
+                        <li>填写回调 URL（接收生成的服务器）</li>
+                        <li>可选填写密钥用于签名验证</li>
+                        <li>设置重试次数（默认3次）</li>
+                      </ul>
+                    </div>
+                  </Card>
+                ),
+              },
+              {
+                color: 'gray',
+                children: (
+                  <Card
+                    size="small"
+                    title="📊 今日概览与历史导出"
+                    variant="borderless"
+                    style={{ background: 'rgba(100,116,139,0.1)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>首页顶部"今日概览"显示：日期时间、生成总数、成功率、失败数</li>
+                        <li>打开"生成历史记录"弹窗，可导出 JSON/MD</li>
+                        <li>导出范围为当前筛选条件下的全部记录</li>
+                      </ul>
+                    </div>
+                  </Card>
+                ),
+              },
+              {
+                color: 'gray',
+                children: (
+                  <Card
+                    size="small"
+                    title="💡 托盘与快捷键"
+                    variant="borderless"
+                    style={{ background: 'rgba(100,116,139,0.1)' }}
+                  >
+                    <div style={{ color: '#666' }}>
+                      <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
+                        <li>托盘图标位置：屏幕右下角任务栏</li>
+                        <li>右键托盘可选择「显示窗口」或「退出」</li>
+                        <li>
+                          <Text strong>Ctrl + Shift + P</Text> - 隐藏/显示窗口（全局快捷键）
+                        </li>
+                      </ul>
+                    </div>
+                  </Card>
                 ),
               },
             ]}
-          />
-
-          <Alert
-            message="📊 今日概览与历史导出"
-            description={
-              <div style={{ color: '#666' }}>
-                <ul style={{ paddingLeft: 20, margin: '4px 0' }}>
-                  <li>
-                    首页顶部“今日概览”会实时显示日期时间、生成总数、成功率、失败数、最近失败。
-                  </li>
-                  <li>打开“生成历史记录”弹窗后，可在底部左侧使用“导出JSON / 导出MD”。</li>
-                  <li>导出范围为当前筛选条件下的全部匹配记录（不只是当前页）。</li>
-                </ul>
-              </div>
-            }
-            type="info"
-            showIcon
-            style={{ marginTop: 12 }}
-          />
-
-          <Divider />
-
-          <Alert
-            message="💡 提示"
-            description={
-              <div style={{ color: '#666' }}>
-                <ul style={{ paddingLeft: 20, margin: 0 }}>
-                  <li>托盘图标位置：屏幕右下角任务栏</li>
-                  <li>右键托盘图标可选择「显示窗口」或「退出」</li>
-                  <li>快捷键在电脑任何界面都有效，不用切换到窗口</li>
-                </ul>
-              </div>
-            }
-            type="info"
-            showIcon
           />
         </div>
       </Modal>
@@ -3216,6 +3269,17 @@ function MainApp() {
         onSelectTemplate={content => {
           setPrompt(content);
           setParsedResult(null);
+        }}
+      />
+
+      <ShareModal
+        visible={shareModalVisible}
+        onClose={() => setShareModalVisible(false)}
+        shareData={{
+          images: selectedShareImage ? [selectedShareImage] : generationResult?.images || [],
+          prompt: prompt || '',
+          model: 'seedream',
+          params: {},
         }}
       />
     </ConfigProvider>

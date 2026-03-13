@@ -70,6 +70,12 @@ export interface APIConfig {
     baseUrl: string;
     apiKey: string;
   };
+  webhook: {
+    enabled: boolean;
+    url: string;
+    secret: string;
+    retryCount: number;
+  };
 }
 
 export interface GenerationProgress {

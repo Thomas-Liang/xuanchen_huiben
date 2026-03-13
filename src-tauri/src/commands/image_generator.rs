@@ -393,9 +393,9 @@ pub async fn generate_image(
         _ => Err("不支持的模型".to_string()),
     };
 
-    // After getting images, save them to local filesystem
-    let saved_image_paths = match result {
-        Ok((ref images, ref notice)) if !images.is_empty() => {
+    // Save images to local filesystem for history/persistence
+    let saved_image_paths: Option<Vec<String>> = match &result {
+        Ok((images, _)) if !images.is_empty() => {
             let app_dir = crate::storage::get_app_data_dir();
             let generated_dir = app_dir.join("generated_images");
             if !generated_dir.exists() {
@@ -409,17 +409,14 @@ pub async fn generate_image(
 
                 // Download and save the image
                 if img_url.starts_with("http") {
-                    // It's a URL, download it
                     match reqwest::get(img_url).await {
                         Ok(resp) => {
                             if let Ok(bytes) = resp.bytes().await {
                                 if let Err(e) = fs::write(&filepath, &bytes) {
                                     eprintln!("Failed to write image {}: {}", filepath.display(), e);
                                 } else {
-                                    saved_paths.push(filename);
+                                    saved_paths.push(filepath.to_string_lossy().to_string());
                                 }
-                            } else {
-                                eprintln!("Failed to get bytes from response for image");
                             }
                         }
                         Err(e) => {
@@ -427,21 +424,16 @@ pub async fn generate_image(
                         }
                     }
                 } else if img_url.starts_with("data:") {
-                    // It's base64 data
                     if let Some(base64_data) = img_url.split(',').nth(1) {
                         use base64::{Engine as _, engine::general_purpose::STANDARD};
                         if let Ok(decoded) = STANDARD.decode(base64_data) {
                             if let Err(e) = fs::write(&filepath, &decoded) {
-                                eprintln!("Failed to write base64 image {}: {}", filepath.display(), e);
+                                eprintln!("Failed to write base64 image: {}", e);
                             } else {
-                                saved_paths.push(filename);
+                                saved_paths.push(filepath.to_string_lossy().to_string());
                             }
-                        } else {
-                            eprintln!("Failed to decode base64 data");
                         }
                     }
-                } else {
-                    eprintln!("Unknown image format: {}", &img_url[..img_url.len().min(100)]);
                 }
             }
             Some(saved_paths)
@@ -449,7 +441,15 @@ pub async fn generate_image(
         _ => None,
     };
     
-    match result {
+    // Return original images directly (base64 or URL) for display
+    let final_images = match &result {
+        Ok((images, _)) => images.clone(),
+        _ => vec![],
+    };
+    
+    eprintln!("Returning {} images to frontend", final_images.len());
+    
+    match &result {
         Ok((images, notice)) => {
             update_task_progress(&task_id, "completed", 100, "生成完成");
             
@@ -458,27 +458,16 @@ pub async fn generate_image(
                 tasks.remove(&task_id);
             }
             
-            // Use saved local paths if available and not empty, otherwise use original URLs
-            let final_images = if let Some(ref paths) = saved_image_paths {
-                if paths.is_empty() {
-                    images.clone()
-                } else {
-                    paths.clone()
-                }
-            } else {
-                images.clone()
-            };
-            
             Ok(ImageGenerationResult {
                 success: true,
                 images: final_images,
                 task_id,
                 error: None,
-                notice,
+                notice: notice.clone(),
             })
         }
         Err(e) => {
-            update_task_progress(&task_id, "failed", 0, &e);
+            update_task_progress(&task_id, "failed", 0, e);
             
             {
                 let mut tasks = GENERATION_TASKS.lock().map_err(|e| e.to_string())?;
@@ -489,7 +478,7 @@ pub async fn generate_image(
                 success: false,
                 images: vec![],
                 task_id,
-                error: Some(e),
+                error: Some(e.to_string()),
                 notice: None,
             })
         }

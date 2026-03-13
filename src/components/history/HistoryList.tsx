@@ -36,7 +36,9 @@ import {
   SwapOutlined,
   CheckOutlined,
   CloseOutlined,
+  ShareAltOutlined,
 } from '@ant-design/icons';
+import { ShareModal } from '../result/ShareModal';
 import type { ColumnsType } from 'antd/es/table';
 import { motion, AnimatePresence } from 'framer-motion';
 import dayjs from 'dayjs';
@@ -84,6 +86,8 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editingHistory, setEditingHistory] = useState<GenerationHistory | null>(null);
   const [editForm] = Form.useForm();
+  const [shareModalVisible, setShareModalVisible] = useState(false);
+  const [selectedShareImage, setSelectedShareImage] = useState<string | null>(null);
 
   const [searchKeyword, setSearchKeyword] = useState('');
   const [filterModel, setFilterModel] = useState<string | undefined>();
@@ -1078,6 +1082,30 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
                         alt={`生成图片 ${idx + 1}`}
                         style={{ width: '100%', borderRadius: 8 }}
                       />
+                      <Space style={{ marginTop: 8 }}>
+                        <Button
+                          type="link"
+                          icon={<DownloadOutlined />}
+                          onClick={() => {
+                            const link = document.createElement('a');
+                            link.href = img;
+                            link.download = `image_${idx + 1}.png`;
+                            link.click();
+                          }}
+                        >
+                          保存
+                        </Button>
+                        <Button
+                          type="link"
+                          icon={<ShareAltOutlined />}
+                          onClick={() => {
+                            setSelectedShareImage(img);
+                            setShareModalVisible(true);
+                          }}
+                        >
+                          分享
+                        </Button>
+                      </Space>
                     </Col>
                   ))}
                 </Row>
@@ -1540,6 +1568,17 @@ export function HistoryList({ visible, onClose, onApplyParams, onRegenerate }: H
           {exportPreviewData.length === 0 && <Empty description="没有符合条件的记录" />}
         </Spin>
       </Modal>
+
+      <ShareModal
+        visible={shareModalVisible}
+        onClose={() => setShareModalVisible(false)}
+        shareData={{
+          images: selectedShareImage ? [selectedShareImage] : selectedHistory?.images || [],
+          prompt: selectedHistory?.prompt || '',
+          model: selectedHistory?.model || 'seedream',
+          params: selectedHistory?.params || {},
+        }}
+      />
     </Modal>
   );
 }

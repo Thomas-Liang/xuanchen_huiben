@@ -18,6 +18,7 @@ use commands::image_generator::{
     save_api_config, save_generation_config, test_api_connection,
 };
 use commands::prompt_parser::{batch_split_prompt, parse_prompt, test_parse};
+use commands::share::{create_share, delete_share, generate_share_html, get_share};
 use storage::Storage;
 use std::net::SocketAddr;
 use tauri::{
@@ -54,8 +55,12 @@ async fn save_image_to_file(image_url: String, file_path: String) -> Result<Stri
         let bytes = response.bytes().await.map_err(|e| e.to_string())?;
         std::fs::write(&file_path, bytes).map_err(|e| e.to_string())?;
         Ok(file_path)
+    } else if std::path::Path::new(&image_url).exists() {
+        // Local file path - just copy it
+        std::fs::copy(&image_url, &file_path).map_err(|e| e.to_string())?;
+        Ok(file_path)
     } else {
-        Err("Unsupported image format".to_string())
+        Err(format!("Unsupported image format or file not found: {}", image_url))
     }
 }
 
@@ -191,6 +196,76 @@ fn create_export_package(
 #[tauri::command]
 fn preview_export_data(query: commands::export_package::ExportQuery) -> Result<Vec<commands::export_package::ExportRecord>, String> {
     commands::export_package::collect_export_data(query)
+}
+
+#[tauri::command]
+fn get_local_ip() -> Result<String, String> {
+    Ok(commands::get_local_ip_address())
+}
+
+#[tauri::command]
+async fn send_notification(
+    app: tauri::AppHandle,
+    title: String,
+    body: String,
+) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    
+    app.notification()
+        .builder()
+        .title(&title)
+        .body(&body)
+        .show()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn is_notification_enabled() -> Result<bool, String> {
+    let settings = storage::get_settings()?;
+    Ok(settings.ui_config.notification_enabled)
+}
+
+#[tauri::command]
+async fn test_webhook(url: String, secret: String) -> Result<String, String> {
+    use crate::commands::webhook::{create_webhook_payload, send_webhook};
+
+    let payload = create_webhook_payload(
+        "test_task_id",
+        "success",
+        vec!["https://example.com/test.png".to_string()],
+        "test prompt",
+        "seedream",
+    );
+
+    send_webhook(&url, &secret, &payload, 1)?;
+    Ok("Webhook test successful!".to_string())
+}
+
+#[tauri::command]
+async fn trigger_webhook(
+    task_id: String,
+    status: String,
+    images: Vec<String>,
+    prompt: String,
+    model: String,
+) -> Result<(), String> {
+    use crate::commands::webhook::{create_webhook_payload, send_webhook};
+
+    let settings = storage::get_settings()?;
+    let webhook_config = &settings.api_config.webhook;
+
+    if !webhook_config.enabled || webhook_config.url.is_empty() {
+        return Ok(());
+    }
+
+    let payload = create_webhook_payload(&task_id, &status, images, &prompt, &model);
+
+    send_webhook(
+        &webhook_config.url,
+        &webhook_config.secret,
+        &payload,
+        webhook_config.retry_count,
+    )
 }
 
 // ==================== Template Commands ====================
@@ -358,7 +433,7 @@ pub async fn main() {
     commands::character_binding::load_tags_from_file();
 
     let api_router = create_api_router();
-    let addr = SocketAddr::from(([127, 0, 0, 1], 8888));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 8888));
     
     let api_handle = tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
@@ -371,6 +446,7 @@ pub async fn main() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
             let hide_item = MenuItem::with_id(app, "hide", "最小化到托盘", true, None::<&str>)?;
@@ -541,6 +617,16 @@ pub async fn main() {
             // Export Package (US-27)
             create_export_package,
             preview_export_data,
+            // Share (V3-32)
+            create_share,
+            get_share,
+            delete_share,
+            generate_share_html,
+            get_local_ip,
+            send_notification,
+            is_notification_enabled,
+            test_webhook,
+            trigger_webhook,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

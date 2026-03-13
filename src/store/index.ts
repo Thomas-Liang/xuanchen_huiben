@@ -27,6 +27,12 @@ const defaultApiConfig: APIConfig = {
     baseUrl: '',
     apiKey: '',
   },
+  webhook: {
+    enabled: false,
+    url: '',
+    secret: '',
+    retryCount: 3,
+  },
 };
 
 const defaultGenerationParams: Partial<ImageGenerationParams> = {

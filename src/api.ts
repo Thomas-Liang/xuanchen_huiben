@@ -202,6 +202,12 @@ export async function saveApiConfig(config: APIConfig): Promise<boolean> {
       baseUrl: config.bananaPro.baseUrl,
       apiKey: config.bananaPro.apiKey,
     },
+    webhook: {
+      enabled: config.webhook.enabled,
+      url: config.webhook.url,
+      secret: config.webhook.secret,
+      retry_count: config.webhook.retryCount,
+    },
   });
 }
 
@@ -211,19 +217,28 @@ export async function loadApiConfig(): Promise<APIConfig> {
     const config = await invoke<{
       seedream: { base_url: string; api_key: string };
       banana_pro: { base_url: string; api_key: string };
+      webhook: { enabled: boolean; url: string; secret: string; retry_count: number };
     }>('load_api_config');
     return {
       seedream: { baseUrl: config.seedream.base_url, apiKey: config.seedream.api_key },
       bananaPro: { baseUrl: config.banana_pro.base_url, apiKey: config.banana_pro.api_key },
+      webhook: {
+        enabled: config.webhook?.enabled || false,
+        url: config.webhook?.url || '',
+        secret: config.webhook?.secret || '',
+        retryCount: config.webhook?.retry_count || 3,
+      },
     };
   }
   const result = await fetchApi<{
     seedream: { baseUrl: string; apiKey: string };
     bananaPro: { baseUrl: string; apiKey: string };
+    webhook?: { enabled: boolean; url: string; secret: string; retryCount: number };
   }>('/api/config/load');
   return {
     seedream: result.seedream,
     bananaPro: result.bananaPro,
+    webhook: result.webhook || { enabled: false, url: '', secret: '', retryCount: 3 },
   };
 }
 
@@ -239,6 +254,7 @@ export async function getDefaultApiConfig(): Promise<APIConfig> {
   return {
     seedream: result.seedream,
     bananaPro: result.bananaPro,
+    webhook: { enabled: false, url: '', secret: '', retryCount: 3 },
   };
 }
 
@@ -1169,4 +1185,81 @@ export async function getTemplateStats(): Promise<TemplateStats> {
     return invoke('get_template_stats');
   }
   return fetchApi('/api/stats/template');
+}
+
+// ==================== Share APIs (V3-32) ====================
+
+export interface ShareData {
+  version: string;
+  type: string;
+  created_at: string;
+  expires_at: string | null;
+  password_protected: boolean;
+  metadata: {
+    prompt: string;
+    model: string;
+    params: Record<string, unknown>;
+  };
+  images: string[];
+}
+
+export interface ShareRecord {
+  id: string;
+  data: ShareData;
+  password: string | null;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export async function createShare(share: {
+  id: string;
+  data: ShareData;
+  password: string | null;
+  expires_at: string | null;
+}): Promise<ShareRecord> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('create_share', { share });
+  }
+  return fetchApi('/api/share/create', share);
+}
+
+export async function getShare(id: string): Promise<ShareRecord | null> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('get_share', { id });
+  }
+  return fetchApi('/api/share/get', { id });
+}
+
+export async function deleteShare(id: string): Promise<boolean> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('delete_share', { id });
+  }
+  return fetchApi('/api/share/delete', { id });
+}
+
+export async function generateShareHtml(data: ShareData, password: string | null): Promise<string> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return invoke('generate_share_html', { data, password });
+  }
+  return fetchApi('/api/share/generate-html', { data, password });
+}
+
+export async function testWebhook(url: string, secret: string): Promise<string> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke('test_webhook', { url, secret });
+}
+
+export async function triggerWebhook(
+  taskId: string,
+  status: string,
+  images: string[],
+  prompt: string,
+  model: string
+): Promise<void> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke('trigger_webhook', { taskId, status, images, prompt, model });
 }

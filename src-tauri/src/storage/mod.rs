@@ -168,6 +168,27 @@ impl Default for AppSettings {
 pub struct ApiConfig {
     pub seedream: ApiProvider,
     pub banana_pro: ApiProvider,
+    pub webhook: WebhookConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebhookConfig {
+    pub enabled: bool,
+    pub url: String,
+    pub secret: String,
+    pub retry_count: u32,
+}
+
+impl Default for WebhookConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            url: String::new(),
+            secret: String::new(),
+            retry_count: 3,
+        }
+    }
 }
 
 impl Default for ApiConfig {
@@ -175,6 +196,7 @@ impl Default for ApiConfig {
         Self {
             seedream: ApiProvider::default(),
             banana_pro: ApiProvider::default(),
+            webhook: WebhookConfig::default(),
         }
     }
 }
@@ -225,6 +247,7 @@ pub struct UiConfig {
     pub sidebar_collapsed: bool,
     pub show_tutorial: bool,
     pub animation_enabled: bool,
+    pub notification_enabled: bool,
 }
 
 impl Default for UiConfig {
@@ -233,6 +256,7 @@ impl Default for UiConfig {
             sidebar_collapsed: false,
             show_tutorial: true,
             animation_enabled: true,
+            notification_enabled: true,
         }
     }
 }
